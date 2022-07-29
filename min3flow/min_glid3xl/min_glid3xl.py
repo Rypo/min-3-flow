@@ -36,7 +36,7 @@ def _rel_model_root(model_file=None):
 
 class Glid3XL:
     def __init__(self, guidance_scale=3.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
-                 model_path=_rel_model_root('finetuned.pt'), 
+                 model_path=_rel_model_root('finetune.pt'), 
                  kl_path=_rel_model_root('kl-f8.pt'), 
                  bert_path=_rel_model_root('bert.pt'), seed=-1) -> None:
         
@@ -81,9 +81,6 @@ class Glid3XL:
                 r = requests.get(base_url + wpath.name)
                 with open(wpath, 'wb') as f: 
                     f.write(r.content)
-            #else:
-            #    print("found {}".format(wpath.name))
-    
 
 
     @property
@@ -221,27 +218,41 @@ class Glid3XL:
             init_img = Image.open(init_img).convert('RGB') #print(init.width, init.height)
         # assume grid for now, will break if 512x512 or similar. TODO: add argument later.
         images = utils.ungrid(init_img, h_out=256, w_out=256)
-        if grid_idx is None:
-            ssims = self.clip_scores(images, text_emb_norm=text_emb_norm, sort=True)
-            #print(ssims)
-            s_images = images[ssims.indices]
-            init = s_images[:s_images.shape[0]//2].to(self.device, dtype=torch.float).div(255.).clamp(0,1)
-        else:
-            s_image = images[grid_idx]
-            init = s_image.to(self.device, dtype=torch.float).div(255.).unsqueeze(0).clamp(0,1)
+        if isinstance(grid_idx, int):
+            #s_image = images[grid_idx]
+            init = images[[grid_idx]]#.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
             #init = init.resize((self.W, self.H), Image.Resampling.LANCZOS)
             #init = TF.to_tensor(init).to(self.device).unsqueeze(0).clamp(0,1)
+        elif isinstance(grid_idx, list):
+            init = images[grid_idx]#.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
+        elif grid_idx is None:
+            ssims = self.clip_scores(images, text_emb_norm=text_emb_norm, sort=True); #print(ssims)
+            #s_images = images[ssims.indices]
+            #init = s_images[:s_images.shape[0]//2].to(self.device, dtype=torch.float).div(255.).clamp(0,1)
+            init = images[ssims.indices]#.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
 
-        #init = init.to(self.device, dtype=torch.float).div(255.).unsqueeze(0).clamp(0,1)
+
+        init = init.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
         #h = self.ldm.encode(init * 2 - 1).sample() *  self.LDM_SCALE_FACTOR
-        h = self.ldm.encode(init.mul(2).sub(1)).sample() * self._LDM_SCALE_FACTOR
+        h = self.ldm.encode(init.mul(2).sub(1)).sample() * self._LDM_SCALE_FACTOR #print(h.shape)
+        
         #init = torch.cat(self.batch_size*2*[h], dim=0)
         #init = torch.tile(h, (32, 1, 1, 1))
         #init = torch.repeat_interleave(h, 2*(self.batch_size//h.size(0)), dim=0, output_size=2*self.batch_size) # (2*BS, 4, H/8, W/8)
         
         #osize=max(2*self.batch_size,2*max(1,self.batch_size//h.size(0)))
         osize=2*max(1,self.batch_size//h.size(0))
+        
         init = h.tile(osize,1,1,1) # (2*BS, 4, H/8, W/8)
+        
+        if init.shape[0] < 2*self.batch_size:
+            # Case when number of grid_idx samples does not evenly divide 2*batch_size
+            # For now, just repeat encoding until 2*batch_size is reached
+            # TODO: assess the impact of this on image diversity
+            diff = 2*self.batch_size-init.shape[0]
+
+            init = torch.cat([init, init[-diff:]], dim=0)
+            
         #h.expand(32, -1, -1, -1)
 
         return init
@@ -349,7 +360,7 @@ class Glid3XL:
             return init_image_embed, self._model_kwargs
 
     @torch.inference_mode()
-    def gen_samples(self, text: str, init_image: str, negative: str='', num_batches: int=1, grid_idx: int=None, skip_rate=0.5, outdir: str=None,):
+    def gen_samples(self, text: str, init_image:(Image.Image|str), negative: str='', num_batches: int=1, grid_idx:(int|list)=None, skip_rate=0.5, outdir: str=None,):
         if self.seed > 0:
             torch.manual_seed(self.seed)
 
@@ -377,7 +388,7 @@ class Glid3XLClip(Glid3XL):
     # The non-clip guided model could temporarily unload clip and ldm while generating samples, and reload for final output.
     # The clip guided model needs to keep both models loaded for generating samples.
     def __init__(self, clip_guidance_scale=500, cutn=16, guidance_scale=3.0, batch_size=1, steps=100, sample_method='plms', imout_size=(256,256), 
-                 model_path='pretrained/finetuned.pt', kl_path='pretrained/kl-f8.pt', bert_path='pretrained/bert.pt', seed=-1) -> None:
+                 model_path='pretrained/finetune.pt', kl_path='pretrained/kl-f8.pt', bert_path='pretrained/bert.pt', seed=-1) -> None:
 
         super().__init__(guidance_scale=guidance_scale, batch_size=batch_size, steps=steps, sample_method=sample_method, imout_size=imout_size, 
                  model_path=model_path, kl_path=kl_path, bert_path=bert_path, seed=seed)
