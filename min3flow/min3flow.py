@@ -3,17 +3,18 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torchvision.utils as vutils
+import torchvision.transforms.functional as TF
 
 from PIL import Image, ImageDraw, ImageFont
 
 from .min_dalle import  MinDalle, MinDalleExt
-from .min_glid3xl import Glid3XL, Glid3XLClip, utils as glid3xl_utils
-from .min_swinir import SwinIR, utils as swinir_utils
+from .min_glid3xl import Glid3XL, Glid3XLClip, utils as gutils
+from .min_swinir import SwinIR, utils as sutils
 
 from .configuration import BaseConfig, MinDalleConfig, MinDalleExtConfig, Glid3XLConfig, Glid3XLClipConfig, SwinIRConfig
 
-# ROOT_PATH = Path(__file__).parent.parent#'../../'  #Path(__file__).parent.parent.parent
-# MODEL_ROOT =  ROOT_PATH.joinpath('pretrained') #ROOT_PATH.joinpath('pretrained', 'glid-3-xl')
+
 
 
 class Min3Flow:
@@ -57,6 +58,9 @@ class Min3Flow:
 
 
     def _begin_stage(self, stage: str) -> None:
+        '''Unload or transfer non-active stage models and free cached memory.'''
+        if self.seed > 0:
+            torch.manual_seed(self.seed)
         if not self.persist:
             if stage == 'generate':
                 #self.model_dalle = None
@@ -87,6 +91,7 @@ class Min3Flow:
         gc.collect()
         torch.cuda.empty_cache()
 
+    @torch.inference_mode()
     def generate(self, text: str, grid_size: int = 4, supercondition_factor: int = 16, temperature: float = 1.0, top_k: int = 256) -> Image.Image:
         '''Generate a set of (256,256) images given a text prompt (MinDalle).
         
@@ -122,22 +127,33 @@ class Min3Flow:
         self._cache['grid_size'] = grid_size
         return image
 
-    def show_grid(self, image: Image.Image, grid_size=4, cell_h=256, cell_w=256) -> Image.Image:
+    def show_grid(self, image: Image.Image, grid_size=None, cell_h=256, cell_w=256) -> Image.Image:
         '''Show a grid of images with index annotations.
 
         Args:
             image (Image.Image): Image grid to show.
-            grid_size (int): The number of images in the grid in both x and y. (default: 4)
+            grid_size (int): The number of images in the grid in both x and y. (default: None)
+                If None, use last grid_size value if available else infer from the image size.
             cell_h (int): The height of each image in the grid. (default: 256)
             cell_w (int): The width of each image in the grid. (default: 256)
 
         Returns:
             Image.Image: A grid of images with index annotations.
         '''
+
+        if grid_size is None:
+            grid_size = self._cache.get('grid_size', 
+                int(image.shape[-1]/cell_w) if isinstance(image, torch.Tensor) else int(imgc.width / cell_w)
+            )
+
+        if isinstance(image, torch.Tensor):
+            image = TF.to_pil_image(vutils.make_grid(image, nrow=grid_size , padding=0, normalize=False))
+        
         imgc = image.copy()
         
         draw = ImageDraw.Draw(imgc)
         fnt = ImageFont.truetype("DejaVuSans.ttf", 20)
+
         
         for i,(x,y) in enumerate(np.mgrid[:grid_size,:grid_size].T.reshape(-1,2)*[cell_w,cell_h]):
             draw.text((x, y), str(i), (255, 255, 255), font=fnt, stroke_width=1, stroke_fill=(0,0,0))
@@ -145,7 +161,7 @@ class Min3Flow:
         return imgc
 
 
-
+    @torch.inference_mode()
     def diffuse(self, init_image, grid_idx=None, skip_rate=0.5, text: str=None, negative='', num_batches=1) -> Image.Image:
         '''Perform diffusion sampling on 1 or more images using Glid3XL.
         
@@ -185,20 +201,37 @@ class Min3Flow:
 
         return image
 
-    def upscale(self, init_image: Image.Image, tile: int=None, tile_overlap: int=0):
-        #self._end_stage('diffuse','generate')
+    @torch.inference_mode()
+    def upscale(self, init_image: Image.Image, tile:(int|bool)=None, tile_overlap: int=0) -> Image.Image:
+        '''Upscale an image using SwinIR.
+
+        Args:
+            init_image (Image.Image): image to upsample.
+            tile (int): Patch size for sliding window upsampling. (default: None). 
+                If integer, will partition init_image into (tile x tile) size patches, 
+                upsample each patch, then construct the final image from the patches. 
+                If None, images larger than (and a multiple of) 256 will use tile=256. 
+                If False, pass the entire image with partioning regardless of dimensions.
+            tile_overlap (int): Overlap between image patch tiles. (default: 0)
+                Useful to blend patch boundaries in large, non-grid images.
+        '''
+
         self._begin_stage('upscale')
 
         if self.model_swinir is None:
             self.model_swinir = SwinIR(**self.swinir_config.to_dict())
         
 
-        #filename = Path(args.init_img).name
-        #outpath = Path(args.output_dir).joinpath(filename).as_posix()
-
         init_image = np.array(init_image)
         
         if tile is None:
+            d,rem = divmod(init_image.width,256)
+            if d > 1 and rem == 0:
+                tile, tile_overlap = 256, 0
+            else: 
+                tile = False
+                
+        if tile is False: # strict object False to throw error if value falsey
             image = self.model_swinir.upscale(init_image)
         else:
             image = self.model_swinir.upscale_patchwise(init_image, slice_dim=tile, slice_overlap=tile_overlap)
