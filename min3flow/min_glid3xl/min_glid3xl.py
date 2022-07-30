@@ -122,7 +122,7 @@ class Glid3XL:
         model_config = model_and_diffusion_defaults()
         model_config.update(model_params)
 
-        #if self.args.cpu:
+        
         if self.device.type=='cpu':
             model_config['use_fp16'] = False
 
@@ -164,20 +164,22 @@ class Glid3XL:
     def load_clip(self):
         # clip
         clip_model, clip_preprocess = clip.load('ViT-L/14', device=self.device, jit=False)
-        clip_model.eval().requires_grad_(False)
+        clip_model = clip_model.eval().requires_grad_(False)
 
         return clip_model, clip_preprocess
 
     def load_bert(self, bert_path):
         bert = BERTEmbedder(1280, 32).to(self.device)
-        bert.half().eval()
+        bert = bert.half().eval().requires_grad_(False)
         bert.load_state_dict(torch.load(bert_path, map_location=self.device))#"cuda:0"))
+
+        return bert
 
     @contextmanager
     def load_unload_bert(self, bert_path, text, negative=''):
         with torch.inference_mode():
             bert = BERTEmbedder(1280, 32).to(self.device)
-            bert.half().eval()
+            bert = bert.half().eval().requires_grad_(False)
             bert.load_state_dict(torch.load(bert_path, map_location=self.device))#"cuda:0"))
             #set_requires_grad(bert, False)
             
@@ -200,8 +202,8 @@ class Glid3XL:
            text_emb, text_blank = bert_output
 
 
-        toktext = clip.tokenize([text]*self.batch_size, truncate=True).to(self.device)
-        text_clip_blank = clip.tokenize([negative]*self.batch_size, truncate=True).to(self.device)
+        toktext = clip.tokenize([text], truncate=True).expand(self.batch_size, -1).to(self.device)
+        text_clip_blank = clip.tokenize([negative], truncate=True).expand(self.batch_size, -1).to(self.device)
 
         # clip context
         text_emb_clip = self.clip_model.encode_text(toktext)
@@ -213,34 +215,29 @@ class Glid3XL:
         return text_emb, text_blank, text_emb_clip, text_emb_clip_blank, text_emb_norm
 
     #@torch.inference_mode()
-    def encode_image_grid(self, init_img, text_emb_norm, grid_idx=None):
+    def encode_image_grid(self, init_img, grid_idx=None):
         if isinstance(init_img, str):
             init_img = Image.open(init_img).convert('RGB') #print(init.width, init.height)
         # assume grid for now, will break if 512x512 or similar. TODO: add argument later.
         images = utils.ungrid(init_img, h_out=256, w_out=256)
         if isinstance(grid_idx, int):
             #s_image = images[grid_idx]
-            init = images[[grid_idx]]#.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
+            init = images[[grid_idx]]
             #init = init.resize((self.W, self.H), Image.Resampling.LANCZOS)
             #init = TF.to_tensor(init).to(self.device).unsqueeze(0).clamp(0,1)
         elif isinstance(grid_idx, list):
-            init = images[grid_idx]#.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
+            init = images[grid_idx]
         elif grid_idx is None:
-            ssims = self.clip_scores(images, text_emb_norm=text_emb_norm, sort=True); #print(ssims)
-            #s_images = images[ssims.indices]
-            #init = s_images[:s_images.shape[0]//2].to(self.device, dtype=torch.float).div(255.).clamp(0,1)
-            init = images[ssims.indices]#.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
+            #ssims = self.clip_scores(images, text_emb_norm=text_emb_norm, sort=True) #;print(ssims)
+            init = images#[ssims.indices]
 
 
         init = init.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
         #h = self.ldm.encode(init * 2 - 1).sample() *  self.LDM_SCALE_FACTOR
         h = self.ldm.encode(init.mul(2).sub(1)).sample() * self._LDM_SCALE_FACTOR #print(h.shape)
-        
         #init = torch.cat(self.batch_size*2*[h], dim=0)
-        #init = torch.tile(h, (32, 1, 1, 1))
         #init = torch.repeat_interleave(h, 2*(self.batch_size//h.size(0)), dim=0, output_size=2*self.batch_size) # (2*BS, 4, H/8, W/8)
         
-        #osize=max(2*self.batch_size,2*max(1,self.batch_size//h.size(0)))
         osize=2*max(1,self.batch_size//h.size(0))
         
         init = h.tile(osize,1,1,1) # (2*BS, 4, H/8, W/8)
@@ -268,6 +265,26 @@ class Glid3XL:
         if sort:
             return torch.sort(sims, descending=True)
         return sims
+
+    def clip_sort(self, img_batch, text_embs):
+        '''Sort image batch by cosine similarity to CLIP text embeddings.
+        
+        Args:
+            img_batch (tensor): uint8 tensor of shape (BS, C, H, W)
+            text_embs (tensor): text embeddingings produced by clip_model
+
+        Returns:
+            tensor: sorted image batch of shape (BS, C, H, W)
+        '''
+        
+        # annoyingly, without first converting to PIL, the outputs differ enough to throw off rankings.
+        imgs_proc = torch.stack([self.clip_preprocess(TF.to_pil_image(img)) for img in img_batch], dim=0)
+        image_embs = self.clip_model.encode_image(imgs_proc.to(self.device))
+        sims = F.cosine_similarity(image_embs, text_embs, dim=-1)
+        ssims = torch.sort(sims, descending=True)
+
+        return img_batch[ssims.indices]
+
 
     def decode_sample(self, sample):
         if isinstance(sample, dict):
@@ -356,11 +373,11 @@ class Glid3XL:
                     "image_embed": None #image_embed (generated in GUI editting mode, unsupported for now)
                 }
 
-            init_image_embed = self.encode_image_grid(init_image, self._text_emb_norm, grid_idx=grid_idx)
+            init_image_embed = self.encode_image_grid(init_image, grid_idx=grid_idx)
             return init_image_embed, self._model_kwargs
 
-    @torch.inference_mode()
-    def gen_samples(self, text: str, init_image:(Image.Image|str), negative: str='', num_batches: int=1, grid_idx:(int|list)=None, skip_rate=0.5, outdir: str=None,):
+    #@torch.inference_mode()
+    def gen_samples(self, init_image:(Image.Image|str), text: str,  negative: str='', num_batches: int=1, grid_idx:(int|list)=None, skip_rate=0.5, outdir: str=None,):
         if self.seed > 0:
             torch.manual_seed(self.seed)
 
@@ -389,12 +406,13 @@ class Glid3XLClip(Glid3XL):
     # The clip guided model needs to keep both models loaded for generating samples.
     def __init__(self, clip_guidance_scale=500, cutn=16, guidance_scale=3.0, batch_size=1, steps=100, sample_method='plms', imout_size=(256,256), 
                  model_path='pretrained/finetune.pt', kl_path='pretrained/kl-f8.pt', bert_path='pretrained/bert.pt', seed=-1) -> None:
-
+        
+        assert batch_size==1, "Clip guided model currently only supports batch_size=1"
         super().__init__(guidance_scale=guidance_scale, batch_size=batch_size, steps=steps, sample_method=sample_method, imout_size=imout_size, 
                  model_path=model_path, kl_path=kl_path, bert_path=bert_path, seed=seed)
 
+        self.model = self.model.requires_grad_(True) # required for conditioning_fn, superclass sets False 
         self.cond_fn = self.conditioning_fn
-
 
         self.clip_guidance_scale = clip_guidance_scale
         self.cutn = cutn
@@ -416,13 +434,9 @@ class Glid3XLClip(Glid3XL):
         fac = self.diffusion.sqrt_one_minus_alphas_cumprod[self.cur_t]
         with torch.enable_grad():
             x = x[:self.batch_size].detach().requires_grad_()
-
             #n = x.shape[0]
-
             #my_t = torch.ones([n], device=self.device, dtype=torch.long) * self.cur_t
-
             out = self.diffusion.p_mean_variance(self.model, x, my_t, clip_denoised=False, model_kwargs=kw)
-
             #fac = self.diffusion.sqrt_one_minus_alphas_cumprod[self.cur_t]
             x_in = out['pred_xstart'] * fac + x * (1 - fac)
 
@@ -441,24 +455,3 @@ class Glid3XLClip(Glid3XL):
 
             return -torch.autograd.grad(loss, x)[0]
 
-
-
-    def gen_samples(self, text: str, init_image: str, negative: str='', num_batches: int=1, grid_idx: int=None, skip_rate=0.5, outdir: str=None,):
-        if self.seed > 0:
-            torch.manual_seed(self.seed)
-        skip_ts = int(self.steps*skip_rate)
-
-        init_image_embed, model_kwargs = self.pre_sampling(text, init_image, negative, grid_idx)
-        
-        
-        self.model.requires_grad_(True)
-        bsample = self.sample_batches(num_batches, init_image_embed, skip_ts, model_kwargs) #torch.cat(batch_samples, dim=0).detach_()
-
-        if outdir is not None:
-            fname = Path(init_image).name if init_image else 'GEN__'+text.replace(' ', '_')+'.png'
-            outpath = os.path.join(outdir,  f'{num_batches:05d}_{fname}')
-            self.save_sample(bsample, num_batches, outpath)
-        else:
-            imout = self.decode_sample(bsample)
-            return utils.to_pil(imout, num_batches)
-    
