@@ -37,3 +37,24 @@ class TextTokenizer:
 
         if is_verbose: print(subwords)
         return subwords
+
+
+class TextTokenizerExt(TextTokenizer):
+    def __init__(self, vocab: dict, merges: List[str]):
+        super().__init__(vocab, merges)
+        #self._vocab_chars = frozenset(set(string.ascii_lowercase+string.digits)|{'$', '%', '&', '*', '.', '/', '<', '>', '@', '\\', '^', "'", '"'}|set(string.whitespace))
+
+    def tokenize(self, text: str, is_verbose: bool = False) -> List[int]:
+        import unicodedata
+        sep_token = self.token_from_subword['</s>']
+        cls_token = self.token_from_subword['<s>']
+        unk_token = self.token_from_subword['<unk>']
+        # attempt to normalize special characters instead of dropping (e.g. Dalí -> Dali instead of Dalí -> Dal)
+        text = unicodedata.normalize('NFKD', text.lower()).encode('ascii','ignore').decode()
+        #text = ''.join(c for c in text if c in self._vocab_chars)
+        tokens = [
+            self.token_from_subword.get(subword, unk_token)
+            for word in text.split(" ") if len(word) > 0
+            for subword in self.get_byte_pair_encoding(word, is_verbose)
+        ]
+        return [cls_token] + tokens + [sep_token]
