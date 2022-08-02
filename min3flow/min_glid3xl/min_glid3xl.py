@@ -1,6 +1,7 @@
 import os
 import gc
 
+import functools
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -58,15 +59,17 @@ class Glid3XL:
         self._LDM_SCALE_FACTOR = 0.18215
 
         self._cache = {}
-        
+        self._model_kwargs = {}
+        self._inference_safe = True
         self._setup_init(model_path=self._model_path, kl_path=self._kl_path, sample_method=sample_method, steps=steps)
 
 
     def _setup_init(self, model_path, kl_path, sample_method, steps):
         self.download_weights()
-        self.model, self.diffusion, self.model_config = utils.timed(self.load_models, model_path=model_path, sample_method=sample_method, steps=steps, clip_guidance=False)
+        self.model, self.diffusion, self.model_config = utils.timed(self.load_models, model_path=model_path, sample_method=sample_method, steps=steps)
         self.clip_model, self.clip_preprocess = utils.timed(self.load_clip)
         self.ldm = utils.timed(self.load_ldm, kl_path=kl_path)
+        #self.bert = utils.timed(self.load_bert, bert_path=self._bert_path)
 
         # Brittle and hacky way to set the sample function, fix
         self.sample_fn = self.diffusion.plms_sample_loop_progressive if sample_method=='plms' else  self.diffusion.ddim_sample_loop_progressive 
@@ -121,20 +124,17 @@ class Glid3XL:
 
         model_config = model_and_diffusion_defaults()
         model_config.update(model_params)
-
-        
-        if self.device.type=='cpu':
-            model_config['use_fp16'] = False
+        model_config['use_fp16'] &= (self.device.type!='cpu')
 
         return model_config
 
 
-    def load_models(self, model_path, sample_method, steps, clip_guidance=False):
+    def load_models(self, model_path, sample_method, steps):
         model_config = self.init_model_config(sample_method, steps)
         model, diffusion = create_model_and_diffusion(**model_config) # Load models
 
         #model_state_dict = torch.load(model_path, map_location='cpu')
-        model.requires_grad_(clip_guidance).eval().to(self.device)
+        model.requires_grad_(False).eval().to(self.device)
         model.load_state_dict(torch.load(model_path, map_location=self.device), strict=False)
         #model.requires_grad_(clip_guidance).eval().to(self.device)
 
@@ -148,21 +148,17 @@ class Glid3XL:
         return model, diffusion, model_config
 
 
-    def load_ldm(self, kl_path):
-        # vae
-        ldm = torch.load(kl_path, map_location=self.device)#"cpu")
+    def load_ldm(self, kl_path): # vae
+        ldm = torch.load(kl_path, map_location=self.device)
         # TODO: verify that LDM can be frozen while using clip guidance. 
         # It does not throw an error, but need to verify that the output doesn't change.
-        ldm.freeze()
+        #ldm.requires_grad_(self.args.clip_guidance); #set_requires_grad(ldm, self.args.clip_guidance)
+        ldm.freeze() 
         ldm.eval()
-        #ldm.to(self.device)
-        #ldm.requires_grad_(self.args.clip_guidance)
-        #set_requires_grad(ldm, self.args.clip_guidance)
 
         return ldm
 
-    def load_clip(self):
-        # clip
+    def load_clip(self): # clip
         clip_model, clip_preprocess = clip.load('ViT-L/14', device=self.device, jit=False)
         clip_model = clip_model.eval().requires_grad_(False)
 
@@ -171,16 +167,16 @@ class Glid3XL:
     def load_bert(self, bert_path):
         bert = BERTEmbedder(1280, 32).to(self.device)
         bert = bert.half().eval().requires_grad_(False)
-        bert.load_state_dict(torch.load(bert_path, map_location=self.device))#"cuda:0"))
+        bert.load_state_dict(torch.load(bert_path, map_location=self.device))
 
         return bert
 
     @contextmanager
-    def load_unload_bert(self, bert_path, text, negative=''):
+    def ephemeral_bert(self, bert_path, text, negative=''):
         with torch.inference_mode():
             bert = BERTEmbedder(1280, 32).to(self.device)
             bert = bert.half().eval().requires_grad_(False)
-            bert.load_state_dict(torch.load(bert_path, map_location=self.device))#"cuda:0"))
+            bert.load_state_dict(torch.load(bert_path, map_location=self.device), strict=False)
             #set_requires_grad(bert, False)
             
             #text_emb = bert.encode([self.args.text]).to(device=self.device, dtype=torch.float).expand(self.batch_size,-1,-1)
@@ -198,9 +194,11 @@ class Glid3XL:
 
     
     def encode_text(self, text, negative=''):
-        with self.load_unload_bert(self._bert_path, text, negative) as bert_output:
-           text_emb, text_blank = bert_output
+        with self.ephemeral_bert(self._bert_path, text, negative) as bert_output:
+            text_emb, text_blank = bert_output
 
+        #text_emb = self.bert.encode([text]*self.batch_size).to(device=self.device, dtype=torch.float)
+        #text_blank = self.bert.encode([negative]*self.batch_size).to(device=self.device, dtype=torch.float)
 
         toktext = clip.tokenize([text], truncate=True).expand(self.batch_size, -1).to(self.device)
         text_clip_blank = clip.tokenize([negative], truncate=True).expand(self.batch_size, -1).to(self.device)
@@ -215,24 +213,20 @@ class Glid3XL:
         return text_emb, text_blank, text_emb_clip, text_emb_clip_blank, text_emb_norm
 
     #@torch.inference_mode()
-    def encode_image_grid(self, init_img, grid_idx=None):
-        if isinstance(init_img, str):
-            init_img = Image.open(init_img).convert('RGB') #print(init.width, init.height)
+    def encode_image_grid(self, images, grid_idx=None):
         # assume grid for now, will break if 512x512 or similar. TODO: add argument later.
-        images = utils.ungrid(init_img, h_out=256, w_out=256)
+        
         if isinstance(grid_idx, int):
-            #s_image = images[grid_idx]
             init = images[[grid_idx]]
             #init = init.resize((self.W, self.H), Image.Resampling.LANCZOS)
             #init = TF.to_tensor(init).to(self.device).unsqueeze(0).clamp(0,1)
         elif isinstance(grid_idx, list):
             init = images[grid_idx]
         elif grid_idx is None:
-            #ssims = self.clip_scores(images, text_emb_norm=text_emb_norm, sort=True) #;print(ssims)
-            init = images#[ssims.indices]
+            init = images
 
 
-        init = init.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
+        #init = init.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
         #h = self.ldm.encode(init * 2 - 1).sample() *  self.LDM_SCALE_FACTOR
         h = self.ldm.encode(init.mul(2).sub(1)).sample() * self._LDM_SCALE_FACTOR #print(h.shape)
         #init = torch.cat(self.batch_size*2*[h], dim=0)
@@ -254,17 +248,6 @@ class Glid3XL:
 
         return init
 
-    #@torch.inference_mode()
-    def clip_scores(self, img_batch, text_emb_norm, sort=False):
-        imgs_proc = torch.stack([self.clip_preprocess(TF.to_pil_image(img)) for img in img_batch], dim=0)
-        image_embs = self.clip_model.encode_image(imgs_proc.to(self.device))
-        #image_emb = self.clip_model.encode_image(self.clip_preprocess(out).unsqueeze(0).to(self.device))
-        image_emb_norm = image_embs / image_embs.norm(dim=-1, keepdim=True)
-        #print(image_embs.shape, self.text_emb_norm.shape)
-        sims = F.cosine_similarity(image_emb_norm, text_emb_norm, dim=-1)
-        if sort:
-            return torch.sort(sims, descending=True)
-        return sims
 
     def clip_sort(self, img_batch, text_embs):
         '''Sort image batch by cosine similarity to CLIP text embeddings.
@@ -296,12 +279,6 @@ class Glid3XL:
 
         return out
 
-    #@torch.inference_mode()
-    def save_sample(self, sample, batch_idx, outpath):
-        out=self.decode_sample(sample)
-
-        vutils.save_image(out, outpath, nrow=int(np.math.sqrt(self.batch_size*max(1,batch_idx))), padding=0)
-        
 
     def clf_free_sampling(self, x_t, ts, **kwargs):
         # Create a classifier-free guidance sampling function
@@ -353,16 +330,15 @@ class Glid3XL:
         #print(bsample.shape)
         return bsample
 
-    def pre_sampling(self, text: str, init_image: str, negative: str='', grid_idx: int=0):
+    def _pre_sampling(self, text: str, init_image: str, negative: str='', grid_idx: int=0):
         with torch.no_grad():
             if text =='' and init_image != '':
                 text = Path(init_image).stem.replace('_', ' ')
 
-            if self._cache.get('text',False) != text and self._cache.get('negative',False) != negative:
+            if self._cache.get('texts',None) != (text, negative):
                 text_emb, text_blank, text_emb_clip, text_emb_clip_blank, text_emb_norm = utils.timed(self.encode_text, text=text, negative=negative)
                 self._text_emb_clip = text_emb_clip
-                self._cache['text'] = text
-                self._cache['negative'] = negative
+                self._cache['texts'] = (text, negative)
 
                 self._text_emb_norm = text_emb_norm
         
@@ -376,25 +352,63 @@ class Glid3XL:
             init_image_embed = self.encode_image_grid(init_image, grid_idx=grid_idx)
             return init_image_embed, self._model_kwargs
 
+    #@functools.cache
+    def update_model_kwargs(self, text: str, negative: str=''):
+        if (text, negative) != self._cache.get('texts', None):
+            
+            text_emb, text_blank, text_emb_clip, text_emb_clip_blank, text_emb_norm = utils.timed(self.encode_text, text=text, negative=negative)
+            self._text_emb_clip = text_emb_clip
+            #self._text_emb_norm = text_emb_norm
+
+            self._model_kwargs = {
+                "context": torch.cat([text_emb, text_blank], dim=0).float(),
+                "clip_embed": torch.cat([text_emb_clip, text_emb_clip_blank], dim=0).float(), # if self.model_config['clip_embed_dim'] else None,
+                "image_embed": None #image_embed (generated in GUI editting mode, unsupported for now)
+            }
+
+            self._cache['texts'] = (text, negative)
+
     #@torch.inference_mode()
-    def gen_samples(self, init_image:(Image.Image|str), text: str,  negative: str='', num_batches: int=1, grid_idx:(int|list)=None, skip_rate=0.5, outdir: str=None,):
+    def gen_samples(self, init_image:(Image.Image|str), text: str,  negative: str='', num_batches: int=1, grid_idx:(int|list)=None, skip_rate=0.5, outdir: str=None,) -> torch.Tensor:
         if self.seed > 0:
             torch.manual_seed(self.seed)
 
+        if text =='' and init_image != '':
+            text = Path(init_image).stem.replace('_', ' ')
+        
+        if isinstance(init_image, str):
+            init_image = Image.open(init_image).convert('RGB')
+            
+        
+        if isinstance(init_image, Image.Image):
+            init_image = utils.ungrid(init_image, h_out=256, w_out=256)
+            init = init.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
+
         skip_ts = int(self.steps*skip_rate)
 
-        init_image_embed, model_kwargs = self.pre_sampling(text, init_image, negative, grid_idx)
+        with torch.no_grad():
+            init_image_embed = self.encode_image_grid(init_image, grid_idx=grid_idx)
+            self.update_model_kwargs(text, negative)
+            
         
-        bsample = self.sample_batches(num_batches, init_image_embed, skip_ts, model_kwargs) #torch.cat(batch_samples, dim=0).detach_()
+        with torch.inference_mode(self._inference_safe):
+            bsample = self.sample_batches(num_batches, init_image_embed, skip_ts, self._model_kwargs) 
         
-        #self.model.to('cpu'); torch.cuda.empty_cache()
-        if outdir is not None:
-            fname = Path(init_image).name if init_image else 'GEN__'+text.replace(' ', '_')+'.png'
-            outpath = os.path.join(outdir,  f'{num_batches:05d}_{fname}')
-            self.save_sample(bsample, num_batches, outpath)
-        else:
-            imout = self.decode_sample(bsample)
-            return utils.to_pil(imout, nrow = int(np.math.sqrt(self.batch_size*max(1,num_batches))))
+
+        output_images = self.decode_sample(bsample)
+        
+        if outdir is None:
+            return output_images
+
+        # else
+
+        fname = Path(init_image).name if init_image else 'GEN__'+text.replace(' ', '_')+'.png'
+        outpath = os.path.join(outdir,  f'{num_batches:05d}_{fname}')
+        vutils.save_image(output_images, outpath, nrow=int((self.batch_size*max(1,num_batches)**0.5)), padding=0)
+        #self.save_sample(bsample, num_batches, outpath)
+            
+        #imout = self.decode_sample(bsample)
+        #return utils.to_pil(imout, nrow = int(np.math.sqrt(self.batch_size*max(1,num_batches))))
 
 
 
@@ -411,7 +425,8 @@ class Glid3XLClip(Glid3XL):
         super().__init__(guidance_scale=guidance_scale, batch_size=batch_size, steps=steps, sample_method=sample_method, imout_size=imout_size, 
                  model_path=model_path, kl_path=kl_path, bert_path=bert_path, seed=seed)
 
-        self.model = self.model.requires_grad_(True) # required for conditioning_fn, superclass sets False 
+        self.model = self.model.requires_grad_(True) # required for conditioning_fn, superclass sets False
+        self._inference_safe = False
         self.cond_fn = self.conditioning_fn
 
         self.clip_guidance_scale = clip_guidance_scale
@@ -438,7 +453,7 @@ class Glid3XLClip(Glid3XL):
             #my_t = torch.ones([n], device=self.device, dtype=torch.long) * self.cur_t
             out = self.diffusion.p_mean_variance(self.model, x, my_t, clip_denoised=False, model_kwargs=kw)
             #fac = self.diffusion.sqrt_one_minus_alphas_cumprod[self.cur_t]
-            x_in = out['pred_xstart'] * fac + x * (1 - fac)
+            x_in = out['pred_xstart']*fac + x*(1 - fac)
 
             x_in /= self._LDM_SCALE_FACTOR
 
@@ -450,7 +465,7 @@ class Glid3XLClip(Glid3XL):
             dists = dists.view([self.cutn, n, -1])
 
             losses = dists.sum(2).mean(0)
-
+            #loss = losses * self.clip_guidance_scale
             loss = losses.sum() * self.clip_guidance_scale
 
             return -torch.autograd.grad(loss, x)[0]

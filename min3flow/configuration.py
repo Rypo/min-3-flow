@@ -160,7 +160,7 @@ class Glid3XLClipConfig(Glid3XLConfig):
             bert_path (str): path to bert model weights. If None, defaults to min_glid3xl/pretrained/bert.pt (default: None)
             base_config (BaseConfig): base configuration for the model (default: None)
         '''
-        
+        assert batch_size==1, "Clip guided model currently only supports batch_size=1"
         super().__init__(guidance_scale, batch_size, steps, sample_method, imout_size, model_path, kl_path, bert_path, base_config)
 
         self.clip_guidance_scale = clip_guidance_scale

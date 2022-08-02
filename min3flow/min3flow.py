@@ -53,7 +53,7 @@ class Min3Flow:
         self._cache = {}
 
     def __repr__(self) -> str:
-        config= 'Min3Flow(\n {}, \n {}, \n {}, \n {}\n)'.format(self.dalle_config, self.glid3xl_config, self.swinir_config, self.base_config)
+        config = 'Min3Flow(\n {}, \n {}, \n {}, \n {}\n)'.format(self.dalle_config, self.glid3xl_config, self.swinir_config, self.base_config)
         return config
 
 
@@ -114,10 +114,10 @@ class Min3Flow:
                 self.model_dalle = MinDalle(**self.dalle_config.to_dict())
 
         
-        image = self.model_dalle.generate_image(
-            text, 
-            self.seed, 
-            grid_size, 
+        image = self.model_dalle.generate_images_tensor(
+            text=text, 
+            seed=self.seed, 
+            grid_size=grid_size, 
             temperature=temperature,
             top_k = top_k,
             supercondition_factor=supercondition_factor,
@@ -127,32 +127,93 @@ class Min3Flow:
         self._cache['grid_size'] = grid_size
         return image
 
-    def show_grid(self, image: Image.Image, grid_size=None, cell_h=256, cell_w=256) -> Image.Image:
+    def clip_sort(self, grid_image, text):
+        import clip
+        clip_model, clip_preprocess = clip.load('ViT-L/14', device='cuda', jit=True)
+        clip_model = clip_model.eval()
+        toks = clip.tokenize([text], truncate=True)
+        
+        image_batch = gutils.ungrid(grid_image)
+        imgs = torch.stack([clip_preprocess(TF.to_pil_image(i)) for i in gutils.ungrid(image_batch)],dim=0)
+        scos = clip_model(imgs.to('cuda'),toks.to('cuda'))[0].squeeze().sort(descending=True)
+        return image_batch[scos.indices]
+
+    def to_image(self, tensor):
+        if tensor.ndim == 4:
+            # case 1A.*
+            grid_size = int(image.shape[0]**0.5) #; cell_w = image.shape[-1]
+            
+            image = vutils.make_grid(image, nrow=grid_size, padding=0, normalize=False)
+        
+        # will fail if (H,W,C) from min_dalle
+        image = TF.to_pil_image(image)
+        return image
+
+    def to_tensor(self, image):
+        return TF.to_tensor(image)
+
+    def show_grid(self, image: Image.Image, grid_size=None) -> Image.Image:
         '''Show a grid of images with index annotations.
 
         Args:
             image (Image.Image): Image grid to show.
             grid_size (int): The number of images in the grid in both x and y. (default: None)
                 If None, use last grid_size value if available else infer from the image size.
-            cell_h (int): The height of each image in the grid. (default: 256)
+            cell_hw tuple(int,int): The height of each image in the grid. (default: 256)
             cell_w (int): The width of each image in the grid. (default: 256)
 
         Returns:
             Image.Image: A grid of images with index annotations.
         '''
+        # case 1.: image is a tensor
+        #   case 1A: batched tensor (N,C,H,W) 
+        #       case 1A.I: no upsampling (G*G,3,H,W) =                              (16,3,256,256)
+        #       case 1A.II: upsampled (G*G, 3, H*4, W*4) = (4*4,3,256*4,256*4) =  (16,3,1024,1024)
+        #   case 1B: unbatched tensor (C,H,W) 
+        #       case 1B.I: single (3,H,W) =                                            (3,256,256)
+        #       case 1B.II: grid (3, H*4, W*4) = (3,256*4,256*4) =                   (3,1024,1024)
+        # case 2: image is a PIL image
+        #   case 2A: single 
+        #       case 2A.I no upsampling                                                 (256,256,3)
+        #       case 2A.II upsampled  (256*4, 256*4, 3) =                             (1024,1024,3)
+        #   case 2B: grid
+        #       case 2B.I no upsampling                                               (1024,1024,3)
+        #       case 2B.II upsampled  (256*4*4, 256*4*4, 3) =                         (4096,4096,3)
 
-        if grid_size is None:
-            grid_size = self._cache.get('grid_size', 
-                int(image.shape[-1]/cell_w) if isinstance(image, torch.Tensor) else int(imgc.width / cell_w)
-            )
+        # case 1B.I, 2A.* 
+        #   OOS - function expects a grid, if not given, okay if unexpected results
+        # case 1A.*
+        #   grid_size: sqrt(N), cell_width=image.shape[-1], total_width=cell_width*grid_size
+        # case 1B.II
+        #   shouldn't happen unless use vutils.make_grid w/o converting to tensor
+        #   or use wrong function from min_dalle which returns (H, W, C) tensors by default
+        # case 2B.*
+        #   try to get grid_size from cache, otherwise, throw error if not found
+        #   cell_width=image.width/grid_size, total_width=image.width
+
 
         if isinstance(image, torch.Tensor):
-            image = TF.to_pil_image(vutils.make_grid(image, nrow=grid_size , padding=0, normalize=False))
+            if image.ndim == 4:
+                # case 1A.*
+                grid_size = int(image.shape[0]**0.5) #; cell_w = image.shape[-1]
+                
+                image = vutils.make_grid(image, nrow=grid_size, padding=0, normalize=False)
+            
+            # will fail if (H,W,C) from min_dalle
+            image = TF.to_pil_image(image)
+            
+        
+        if grid_size is None:
+            if 'grid_size' in self._cache:
+                grid_size = self._cache['grid_size']
+            else:
+                raise ValueError('grid_size not provided and not previously set.')
+
+        cell_h, cell_w = int(image.height/grid_size), int(image.width/grid_size)
         
         imgc = image.copy()
-        
         draw = ImageDraw.Draw(imgc)
-        fnt = ImageFont.truetype("DejaVuSans.ttf", 20)
+        fnt = ImageFont.truetype("DejaVuSans.ttf", 16*(cell_w//256))
 
         
         for i,(x,y) in enumerate(np.mgrid[:grid_size,:grid_size].T.reshape(-1,2)*[cell_w,cell_h]):
@@ -161,15 +222,18 @@ class Min3Flow:
         return imgc
 
 
-    @torch.inference_mode()
-    def diffuse(self, init_image, grid_idx=None, skip_rate=0.5, text: str=None, negative='', num_batches=1) -> Image.Image:
-        '''Perform diffusion sampling on 1 or more images using Glid3XL.
+    
+    def diffuse(self, init_image, grid_idx:(int|list)=None, skip_rate:float=0.5, text:str=None, negative:str='', num_batches:int=1) -> Image.Image:
+        '''Perform diffusion sampling on 1 or more images using Glid3XL or Glid3XLClip.
         
         Args:
             init_image (Image.Image): Initial image to seed the sampling.
-            grid_idx (int, list): Index or list of indices of the image in the grid to sample (can display indices with Min3Flow.show_grid). If None, use all images. (default: None)
-            skip_rate (float): Percent of diffusion steps to skip. Values near 1 will minimally change the init_image, near 0 will significantly change the input image. (default: 0.5)
-            text (str): Text prompt to generate images from. If None, use the last text prompt used. (default: None)
+            grid_idx (int, list): Index or list of indices of the image in the grid to sample. (default: None)
+                Use Min3Flow.show_grid to display grid indices overlay. If None, use all images. 
+            skip_rate (float): Percent of diffusion steps to skip. (default: 0.5)
+                Values near 1 will minimally change the init_image, near 0 will significantly change the input image. 
+            text (str): Text prompt to generate images from. (default: None)
+                If None, use the last text prompt used. 
             negative (str): Negative Text prompt to oppose text prompt. (default: '')
             num_batches (int): Number of batches of size batch_size to run. (default: 1)
         
@@ -181,23 +245,26 @@ class Min3Flow:
 
         if text is None:
             text = self._cache['text']
-
+        
+        inference_safe = True
         if self.model_glid3xl is None:
             if isinstance(self.glid3xl_config, Glid3XLClipConfig):
                 self.model_glid3xl = Glid3XLClip(**self.glid3xl_config.to_dict())
+                inference_safe = False
             else:
                 self.model_glid3xl = Glid3XL(**self.glid3xl_config.to_dict())
                 
-        
-        image = self.model_glid3xl.gen_samples(
-            text=text, 
-            init_image=init_image, 
-            negative=negative, 
-            num_batches=num_batches,
-            grid_idx=grid_idx,
-            skip_rate=skip_rate,
-            outdir=None
-        )
+                
+        with torch.inference_mode(inference_safe):
+            image = self.model_glid3xl.gen_samples(
+                text=text, 
+                init_image=init_image, 
+                negative=negative, 
+                num_batches=num_batches,
+                grid_idx=grid_idx,
+                skip_rate=skip_rate,
+                outdir=None
+            )
 
         return image
 
@@ -222,10 +289,10 @@ class Min3Flow:
             self.model_swinir = SwinIR(**self.swinir_config.to_dict())
         
 
-        init_image = np.array(init_image)
         
         if tile is None:
-            d,rem = divmod(init_image.width,256)
+            W = init_image.width if isinstance(init_image, Image.Image) else init_image.shape[-1]
+            d,rem = divmod(W,256)
             if d > 1 and rem == 0:
                 tile, tile_overlap = 256, 0
             else: 
@@ -234,6 +301,7 @@ class Min3Flow:
         if tile is False: # strict object False to throw error if value falsey
             image = self.model_swinir.upscale(init_image)
         else:
-            image = self.model_swinir.upscale_patchwise(init_image, slice_dim=tile, slice_overlap=tile_overlap)
+            image = self.model_swinir.upscale_prebatched(init_image, tile_size=tile, tile_overlap=tile_overlap)
+            #image = self.model_swinir.upscale_patchwise(init_image, slice_dim=tile, slice_overlap=tile_overlap)
 
-        return Image.fromarray(image)
+        return image

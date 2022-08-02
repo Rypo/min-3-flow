@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import torchvision.transforms as T
 from torchvision.transforms import functional as TF
 import torchvision.utils as vutils
 
@@ -82,10 +83,11 @@ def grid_from_images(images: torch.FloatTensor) -> Image.Image:
     image = Image.fromarray(image.detach().to('cpu').numpy())
     return image
 
-def ungrid(imgrid: Image.Image, h_out=256, w_out=256):
+def ungrid(imgrid: Image.Image, h_out=256, w_out=256, channel_first=True):
     
     tgrid = torch.from_numpy(np.array(imgrid))
-    imbatch = rearrange(tgrid, '(b1 h) (b2 w) c -> (b1 b2) c h w ', h=h_out, w=w_out)
+    dord='c h w' if channel_first else 'h w c'
+    imbatch = rearrange(tgrid, f'(b1 h) (b2 w) c -> (b1 b2) {dord} ', h=h_out, w=w_out)
     return imbatch
 
 def mkgrid(imbatch, nrow=4):
@@ -116,93 +118,42 @@ def prepend_clip_score(filename, similarity):
     os.rename(npy_filename, npy_final)
 
 
+#@torch.inference_mode()
+# def clip_scores(self, img_batch, text_emb_norm, sort=False):
+#     imgs_proc = torch.stack([self.clip_preprocess(TF.to_pil_image(img)) for img in img_batch], dim=0)
+#     image_embs = self.clip_model.encode_image(imgs_proc.to(self.device))
+#     #image_emb = self.clip_model.encode_image(self.clip_preprocess(out).unsqueeze(0).to(self.device))
+#     image_emb_norm = image_embs / image_embs.norm(dim=-1, keepdim=True)
+#     #print(image_embs.shape, self.text_emb_norm.shape)
+#     sims = F.cosine_similarity(image_emb_norm, text_emb_norm, dim=-1)
+#     if sort:
+#         return torch.sort(sims, descending=True)
+#     return sims
+
+def _convert_image_to_rgb(image):
+    return image.convert("RGB")
+
+def _clip_preprocess(n_px):
+    return T.Compose([
+        T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC),
+        T.CenterCrop(n_px),
+        _convert_image_to_rgb,
+        T.ToTensor(),
+        T.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+    ])
+
+def _clip_preprocess_tensor(n_px):
+    '''Attempt to mirror the preprocessing of the clip_preprocess function on a tensor of shape [..., H, W].
+    Unfortunately, does not replicate PIL behavior, thus making the CLIP scores inaccurate.
+    '''
+    return T.Compose([
+        T.Resize(n_px, interpolation=T.InterpolationMode.BICUBIC, antialias=True),
+        T.CenterCrop(n_px),
+        T.Lambda(lambda x: x.to(torch.float).div(255.)),
+        #T.Lambda(lambda x: torch.as_tensor(x, dtype=torch.float).div(255)),
+        #_convert_image_to_rgb,
+        #T.ToTensor(),
+        T.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+    ])
 
 
-
-    # def save_sample(i, sample, clip_score=False):
-    #     for k, image in enumerate(sample['pred_xstart'][:args.batch_size]):
-    #         image /= 0.18215
-    #         im = image.unsqueeze(0)
-    #         out = ldm.decode(im)
-
-    #         npy_filename = f'output_npy/{args.prefix}{i * args.batch_size + k:05}.npy'
-    #         with open(npy_filename, 'wb') as outfile:
-    #             np.save(outfile, image.detach().cpu().numpy())
-
-    #         out = TF.to_pil_image(out.squeeze(0).add(1).div(2).clamp(0, 1))
-
-    #         filename = f'output/{args.prefix}{i * args.batch_size + k:05}.png'
-    #         out.save(filename)
-
-    #         if clip_score:
-    #             image_emb = clip_model.encode_image(clip_preprocess(out).unsqueeze(0).to(device))
-    #             image_emb_norm = image_emb / image_emb.norm(dim=-1, keepdim=True)
-
-    #             similarity = F.cosine_similarity(image_emb_norm, text_emb_norm, dim=-1)
-
-    #             final_filename = f'output/{args.prefix}_{similarity.item():0.3f}_{i * args.batch_size + k:05}.png'
-    #             #final_filename = f'output/{args.prefix}_{i * args.batch_size + k:05}_{similarity.item():0.3f}.png'
-    #             os.rename(filename, final_filename)
-
-    #             npy_final = f'output_npy/{args.prefix}_{similarity.item():0.3f}_{i * args.batch_size + k:05}.npy'
-    #             #npy_final = f'output_npy/{args.prefix}_{i * args.batch_size + k:05}_{similarity.item():0.3f}.npy'
-    #             os.rename(npy_filename, npy_final)
-
-
-
-
-
-
-# def get_kwargs(self):
-#     image_embed = None
-
-#     # image context
-#     #if self.args.edit:
-#     #    image_embed = edit_mode(self.ldm, self.args)
-#     #elif self.model_config['image_condition']:
-#         # using inpaint model but no image is provided
-#     #    image_embed = torch.zeros(self.args.batch_size*2, 4, self.args.height//8, self.args.width//8, device=self.device)
-
-#     kwargs = {
-#         "context": torch.cat([self.text_emb, self.text_blank], dim=0).float(),
-#         "clip_embed": torch.cat([self.text_emb_clip, self.text_emb_clip_blank], dim=0).float() if self.model_config['clip_embed_dim'] else None,
-#         "image_embed": image_embed
-#     }
-#     return kwargs
-
-
-
-# @torch.inference_mode()
-# def load_encode_bert(self):
-#     bert = BERTEmbedder(1280, 32, device=self.device)
-#     bert.half().eval()
-#     #sd = 
-#     bert.load_state_dict(torch.load(self.args.bert_path, map_location=self.device))
-#     #del sd
-#     #bert.to(self.device)
-#     #bert.half().eval()
-#     utils.set_requires_grad(bert, False)
-    
-    
-#     text_emb = bert.encode([self.args.text]*self.batch_size).to(device=self.device, dtype=torch.float)
-#     text_blank = bert.encode([self.args.negative]*self.batch_size).to(device=self.device, dtype=torch.float)
-#     del bert
-#     gc.collect()
-#     torch.cuda.empty_cache()
-    
-#     return text_emb, text_blank
-
-
-# def save_npimage(self, i, k, image):
-#     npy_filename = f'output_npy/{self.args.prefix}{i * self.batch_size + k:05}.npy'
-#     with open(npy_filename, 'wb') as outfile:
-#         np.save(outfile, image.detach().cpu().numpy())
-
-# #@torch.inference_mode()
-# def clip_score(self, out):
-
-#     #image_emb = self.clip_model.encode_image(self.clip_proct(out).to(self.device))
-#     image_emb = self.clip_model.encode_image(self.clip_preprocess(out).unsqueeze(0).to(self.device))
-#     image_emb_norm = image_emb / image_emb.norm(dim=-1, keepdim=True)
-#     similarity = F.cosine_similarity(image_emb_norm, self.text_emb_norm, dim=-1)
-#     return similarity

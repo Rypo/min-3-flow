@@ -294,9 +294,34 @@ class MinDalle:
         return next(image_stream)
 
 
-    def generate_images(self, *args, **kwargs) -> Image.Image:
+    def generate_images(self, *args, **kwargs) -> FloatTensor:
         images_stream = self.generate_images_stream(
             *args, **kwargs, 
             progressive_outputs=False
         )
         return next(images_stream)
+
+
+    def generate_image_tensor(self, *args, **kwargs) -> FloatTensor:
+        image_stream = self.generate_raw_image_stream(
+            *args, **kwargs, 
+            progressive_outputs=False
+        )
+        # default is float tensor (0-255) HWC
+        # so, convert to float tensor (0-1) CHW to be consistent other outputs
+        return next(image_stream).permute(2,0,1).div(255)
+
+    def generate_images_tensor(self, *args, **kwargs) -> FloatTensor:
+        image_stream = self.generate_raw_image_stream(
+            *args, **kwargs, 
+            progressive_outputs=False
+        )
+        # default is float tensor (0-255) NHWC
+        # so, convert to float tensor (0-1) NCHW to be consistent other outputs
+        image = next(image_stream)
+        grid_size = kwargs['grid_size']
+        image = image.view([grid_size * 256, grid_size, 256, 3])
+        image = image.transpose(1, 0)
+        image = image.reshape([grid_size ** 2, 2 ** 8, 2 ** 8, 3])
+
+        return image.permute(0,3,1,2).div(255)
