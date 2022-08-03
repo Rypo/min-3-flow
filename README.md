@@ -7,6 +7,7 @@ Min-3-Flow is a 3-stage text to image generation pipeline. Its structure is mode
 git clone https://github.com/Rypo/min-3-flow.git
 cd min-3-flow
 conda create -n min3flow mamba #mamba not strcitly required, but recommended. Otherwise, replace 'mamba' with 'conda'
+<<<<<<< HEAD
 mamba install jupyter notebook
 
 mamba install pytorch torchvision cudatoolkit=11.6 -c pytorch -c conda-forge
@@ -18,6 +19,17 @@ pip install timm --no-deps # SwinIR requirement
 
 # ldm requirements
 pip install pytorch-lightning # pip package typically more up to date than conda-forge
+=======
+mamba install pytorch torchvision cudatoolkit=11.6 -c pytorch -c conda-forge
+mamba install -c conda-forge transformers einops # (Glid3XL req)
+mamba install jupyter notebook
+mamba install ftfy regex # CLIP requirements
+pip install git+https://github.com/openai/CLIP.git
+pip install timm --no-deps # SwinIR requirement
+
+# ldm requirements
+pip install pytorch-lightning
+>>>>>>> edc31d4b3b37bfa6f7c792c522906de539234737
 mamba install -c conda-forge omegaconf
 
 # order is important, taming-transforms install before latent-diffusion
