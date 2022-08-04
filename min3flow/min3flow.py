@@ -9,8 +9,9 @@ import torchvision.transforms.functional as TF
 from PIL import Image, ImageDraw, ImageFont
 
 from .min_dalle import  MinDalle, MinDalleExt
-from .min_glid3xl import Glid3XL, Glid3XLClip, utils as gutils
-from .min_swinir import SwinIR, utils as sutils
+from .min_glid3xl import Glid3XL, Glid3XLClip
+from .min_swinir import SwinIR
+from .utils import tensor_ops as tops
 
 from .configuration import BaseConfig, MinDalleConfig, MinDalleExtConfig, Glid3XLConfig, Glid3XLClipConfig, SwinIRConfig
 
@@ -133,16 +134,14 @@ class Min3Flow:
         clip_model = clip_model.eval()
         toks = clip.tokenize([text], truncate=True)
         
-        image_batch = gutils.ungrid(grid_image)
-        imgs = torch.stack([clip_preprocess(TF.to_pil_image(i)) for i in gutils.ungrid(image_batch)],dim=0)
+        image_batch = tops.ungrid(grid_image)
+        imgs = torch.stack([clip_preprocess(TF.to_pil_image(i)) for i in image_batch],dim=0)
         scos = clip_model(imgs.to('cuda'),toks.to('cuda'))[0].squeeze().sort(descending=True)
         return image_batch[scos.indices]
 
     def to_image(self, tensor):
         if tensor.ndim == 4:
-            # case 1A.*
             grid_size = int(image.shape[0]**0.5) #; cell_w = image.shape[-1]
-            
             image = vutils.make_grid(image, nrow=grid_size, padding=0, normalize=False)
         
         # will fail if (H,W,C) from min_dalle
@@ -213,7 +212,10 @@ class Min3Flow:
         
         imgc = image.copy()
         draw = ImageDraw.Draw(imgc)
-        fnt = ImageFont.truetype("DejaVuSans.ttf", 16*(cell_w//256))
+        try:
+            fnt = ImageFont.truetype("DejaVuSans.ttf", 16*(cell_w//256))
+        except OSError as e:
+            fnt = ImageFont.truetype("arial.ttf", 16*(cell_w//256))
 
         
         for i,(x,y) in enumerate(np.mgrid[:grid_size,:grid_size].T.reshape(-1,2)*[cell_w,cell_h]):
@@ -300,8 +302,9 @@ class Min3Flow:
                 
         if tile is False: # strict object False to throw error if value falsey
             image = self.model_swinir.upscale(init_image)
+        elif tile_overlap == 0:
+            image = self.model_swinir.upscale_prebatched(init_image)
         else:
-            image = self.model_swinir.upscale_prebatched(init_image, tile_size=tile, tile_overlap=tile_overlap)
-            #image = self.model_swinir.upscale_patchwise(init_image, slice_dim=tile, slice_overlap=tile_overlap)
+            image = self.model_swinir.upscale_patchwise(init_image, tile=tile, tile_overlap=tile_overlap)
 
         return image

@@ -25,21 +25,16 @@ from .models.guided_diffusion.script_util import create_model_and_diffusion, mod
 from .models.encoders.modules import BERTEmbedder
 
 from . import utils
+from ..utils.io import download_weights
 
-
-def _rel_model_root(model_file=None):
-    pretrained_dir = os.path.join(os.path.dirname(__file__), 'pretrained')
-    rel_model_path = os.path.relpath(pretrained_dir, os.getcwd())
-    if model_file is None:
-        return rel_model_path
-    return os.path.join(rel_model_path,model_file)
+_WEIGHT_DOWNLOAD_URL = 'https://dall-3.com/models/glid-3-xl/{}'
+_DEFAULT_WEIGHT_ROOT = "~/.cache/min3flow/glid3xl"
 
 
 class Glid3XL:
     def __init__(self, guidance_scale=3.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
-                 model_path=_rel_model_root('finetune.pt'), 
-                 kl_path=_rel_model_root('kl-f8.pt'), 
-                 bert_path=_rel_model_root('bert.pt'), seed=-1) -> None:
+                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', 
+                 weight_root = None, seed=-1) -> None:
         
         self.guidance_scale = guidance_scale
         self.batch_size = batch_size
@@ -50,9 +45,10 @@ class Glid3XL:
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.seed = seed
 
-        self._model_path = model_path
-        self._kl_path = kl_path
-        self._bert_path = bert_path
+        self._weight_root = weight_root if weight_root is not None else os.path.expanduser(_DEFAULT_WEIGHT_ROOT)
+        #self._diffusion_weight = diffusion_weight
+        #self._kl_path = kl_path
+        #self._bert_path = bert_path
 
         self.cond_fn = None
         self.cur_t = None
@@ -61,29 +57,27 @@ class Glid3XL:
         self._cache = {}
         self._model_kwargs = {}
         self._inference_safe = True
-        self._setup_init(model_path=self._model_path, kl_path=self._kl_path, sample_method=sample_method, steps=steps)
+        self._setup_init(diffusion_weight=diffusion_weight, kl_weight=kl_weight, bert_weight=bert_weight, sample_method=sample_method, steps=steps)
 
 
-    def _setup_init(self, model_path, kl_path, sample_method, steps):
-        self.download_weights()
-        self.model, self.diffusion, self.model_config = utils.timed(self.load_models, model_path=model_path, sample_method=sample_method, steps=steps)
+    def _setup_init(self, diffusion_weight, kl_weight, bert_weight, sample_method, steps):
+        diffusion_path = os.path.join(self._weight_root, diffusion_weight)
+        diffusion_path = download_weights(diffusion_path, _WEIGHT_DOWNLOAD_URL.format(diffusion_weight))
+        
+        kl_path = os.path.join(self._weight_root, kl_weight)
+        kl_path = download_weights(kl_path, _WEIGHT_DOWNLOAD_URL.format(kl_weight))
+        
+        bert_path = os.path.join(self._weight_root, bert_weight)
+        bert_path = download_weights(bert_path, _WEIGHT_DOWNLOAD_URL.format(bert_weight))
+        self._bert_path = bert_path # save for lazy loading bert
+
+        self.model, self.diffusion, self.model_config = utils.timed(self.load_models, model_path=diffusion_path, sample_method=sample_method, steps=steps)
         self.clip_model, self.clip_preprocess = utils.timed(self.load_clip)
         self.ldm = utils.timed(self.load_ldm, kl_path=kl_path)
         #self.bert = utils.timed(self.load_bert, bert_path=self._bert_path)
 
         # Brittle and hacky way to set the sample function, fix
         self.sample_fn = self.diffusion.plms_sample_loop_progressive if sample_method=='plms' else  self.diffusion.ddim_sample_loop_progressive 
-
-
-    def download_weights(self):
-        base_url = 'https://dall-3.com/models/glid-3-xl/'
-        for wpath in [self._model_path, self._kl_path, self._bert_path]:
-            wpath = Path(wpath)
-            if not wpath.exists():
-                print("downloading {} to {}".format(wpath.name, str(wpath)))
-                r = requests.get(base_url + wpath.name)
-                with open(wpath, 'wb') as f: 
-                    f.write(r.content)
 
 
     @property

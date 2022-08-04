@@ -3,15 +3,10 @@ import os
 from pathlib import Path
 
 import torch
-import inspect
 
 ROOT_PATH = Path(__file__).parent.parent
 MODEL_ROOT =  ROOT_PATH.joinpath('pretrained') 
 OUTPUT_ROOT =  ROOT_PATH.joinpath('output') 
-
-from .min_dalle.min_dalle import _rel_model_root as rel_model_root_dalle
-from .min_glid3xl.min_glid3xl import _rel_model_root as rel_model_root_glid3xl
-from .min_swinir.min_swinir import _rel_model_root as rel_model_root_swinir
 
 
 class _BaseConfigAlt:
@@ -78,7 +73,7 @@ class MinDalleConfig(BaseConfig):
 
         self.base_config = BaseConfig() if base_config is None else base_config
         #self.models_root = self.base_config.pretrained_root.joinpath(models_root)
-        self.models_root = models_root if models_root is not None else rel_model_root_dalle()
+        self.models_root = models_root #if models_root is not None else rel_model_root_dalle()
         self.dtype = dtype
         self.is_mega = is_mega
         self.is_reusable = is_reusable
@@ -104,7 +99,7 @@ class MinDalleExtConfig(BaseConfig):
         self.base_config = BaseConfig() if base_config is None else base_config
         
         #self.models_root = self.base_config.pretrained_root.joinpath(models_root)
-        self.models_root = models_root if models_root is not None else rel_model_root_dalle()
+        self.models_root = models_root #if models_root is not None else rel_model_root_dalle()
         self.model_variant = model_variant
         self.dtype = dtype
         self.is_reusable = is_reusable
@@ -114,7 +109,8 @@ class MinDalleExtConfig(BaseConfig):
 
 class Glid3XLConfig(BaseConfig):
     def __init__(self, guidance_scale=3.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
-                 model_path=None, kl_path=None, bert_path=None, base_config:BaseConfig=None):
+                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', 
+                 weight_root = None, base_config:BaseConfig=None):
         '''Configuration for Glid3XL
 
         Args:
@@ -134,18 +130,20 @@ class Glid3XLConfig(BaseConfig):
         self.steps = steps
         self.sample_method = sample_method
         self.imout_size = imout_size
-        self.model_path = model_path if model_path is not None else rel_model_root_glid3xl('finetune.pt')
+        self.diffusion_weight = diffusion_weight #if model_path is not None else rel_model_root_glid3xl('finetune.pt')
         #self.base_config.pretrained_root.joinpath(model_path)
-        self.kl_path = kl_path if kl_path is not None else rel_model_root_glid3xl('kl-f8.pt')
+        self.kl_weight = kl_weight #if kl_path is not None else rel_model_root_glid3xl('kl-f8.pt')
         #self.base_config.pretrained_root.joinpath(kl_path)
-        self.bert_path = bert_path if bert_path is not None else rel_model_root_glid3xl('bert.pt')
+        self.bert_weight = bert_weight #if bert_path is not None else rel_model_root_glid3xl('bert.pt')
+        self.weight_root = weight_root
         #self.base_config.pretrained_root.joinpath(bert_path)
         self.seed = self.base_config.seed
         
 
 class Glid3XLClipConfig(Glid3XLConfig):
     def __init__(self, clip_guidance_scale=500, cutn=16, guidance_scale=3.0, batch_size=1, steps=100, sample_method='plms', imout_size=(256,256), 
-                 model_path=None, kl_path=None, bert_path=None, base_config:BaseConfig=None):
+                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', 
+                 weight_root = None, base_config:BaseConfig=None):
         '''Configuration for Glid3XLClip
 
         Args:
@@ -161,7 +159,7 @@ class Glid3XLClipConfig(Glid3XLConfig):
             base_config (BaseConfig): base configuration for the model (default: None)
         '''
         assert batch_size==1, "Clip guided model currently only supports batch_size=1"
-        super().__init__(guidance_scale, batch_size, steps, sample_method, imout_size, model_path, kl_path, bert_path, base_config)
+        super().__init__(guidance_scale, batch_size, steps, sample_method, imout_size, diffusion_weight, kl_weight, bert_weight, weight_root, base_config)
 
         self.clip_guidance_scale = clip_guidance_scale
         self.cutn = cutn
@@ -169,7 +167,7 @@ class Glid3XLClipConfig(Glid3XLConfig):
 
 
 class SwinIRConfig(BaseConfig):
-    def __init__(self, task='real_sr', scale=4, large_model=True, training_patch_size=None, noise=None, jpeg=None, model_dir=None, base_config:BaseConfig=None):
+    def __init__(self, task='real_sr', scale=4, large_model=True, training_patch_size=None, noise=None, jpeg=None, weight_root=None, base_config:BaseConfig=None):
         '''Configuration for SwinIR
 
         In contrast to other configurations, the primary purpose of the arguments is to determine which model weights to use.
@@ -198,6 +196,6 @@ class SwinIRConfig(BaseConfig):
         self.training_patch_size = training_patch_size
         self.noise = noise
         self.jpeg = jpeg
-        self.model_dir = model_dir if model_dir is not None else rel_model_root_swinir()
+        self.weight_root = weight_root #if model_dir is not None else rel_model_root_swinir()
         #self.base_config.pretrained_root.joinpath(model_dir)
         

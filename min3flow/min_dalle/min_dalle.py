@@ -11,6 +11,8 @@ from typing import Iterator
 from .text_tokenizer import TextTokenizer
 from .models import DalleBartEncoder, DalleBartDecoder, VQGanDetokenizer
 
+from ..utils.io import download_weights
+
 torch.set_grad_enabled(False)
 torch.set_num_threads(os.cpu_count())
 torch.backends.cudnn.enabled = True
@@ -22,19 +24,14 @@ torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 MIN_DALLE_REPO = 'https://huggingface.co/kuprel/min-dalle/resolve/main/'
 IMAGE_TOKEN_COUNT = 256
 
-#MODEL_ROOT = os.path.join(os.path.dirname(__file__), 'pretrained')
+_WEIGHT_DOWNLOAD_URL = 'https://huggingface.co/kuprel/min-dalle/resolve/main/{}'
+_DEFAULT_WEIGHT_ROOT = "~/.cache/min3flow/min_dalle"
 
-def _rel_model_root(model_file=None):
-    pretrained_dir = os.path.join(os.path.dirname(__file__), 'pretrained')
-    rel_model_path = os.path.relpath(pretrained_dir, os.getcwd())
-    if model_file is None:
-        return rel_model_path
-    return os.path.join(rel_model_path,model_file)
     
 class MinDalle:
     def __init__(
         self,
-        models_root: str = _rel_model_root(),
+        models_root: str = None,
         dtype: torch.dtype = torch.float32,
         device: str = None,
         is_mega: bool = True, 
@@ -57,6 +54,9 @@ class MinDalle:
         self.text_vocab_count = 50272 if is_mega else 50264
         self.image_vocab_count = 16415 if is_mega else 16384
 
+        if models_root is None: 
+            models_root = os.path.expanduser(_DEFAULT_WEIGHT_ROOT)
+
         model_name = 'dalle_bart_{}'.format('mega' if is_mega else 'mini')
         dalle_path = os.path.join(models_root, model_name)
         vqgan_path = os.path.join(models_root, 'vqgan')
@@ -67,6 +67,9 @@ class MinDalle:
         self.encoder_params_path = os.path.join(dalle_path, 'encoder.pt')
         self.decoder_params_path = os.path.join(dalle_path, 'decoder.pt')
         self.detoker_params_path = os.path.join(vqgan_path, 'detoker.pt')
+
+        self._dalle_path = dalle_path
+        self._vqgan_path = vqgan_path
 
         self.init_tokenizer()
         if is_reusable:
@@ -90,24 +93,42 @@ class MinDalle:
         with open(self.merges_path, 'wb') as f: f.write(merges.content)
 
 
+    # def download_encoder(self):
+    #     if self.is_verbose: print("downloading encoder params")
+    #     suffix = '' if self.is_mega else '_mini'
+    #     params = requests.get(MIN_DALLE_REPO + 'encoder{}.pt'.format(suffix))
+    #     with open(self.encoder_params_path, 'wb') as f: f.write(params.content)
+
     def download_encoder(self):
         if self.is_verbose: print("downloading encoder params")
         suffix = '' if self.is_mega else '_mini'
-        params = requests.get(MIN_DALLE_REPO + 'encoder{}.pt'.format(suffix))
-        with open(self.encoder_params_path, 'wb') as f: f.write(params.content)
+        download_weights(self.encoder_params_path, _WEIGHT_DOWNLOAD_URL.format(f'encoder{suffix}.pt'))
+
+
+
+    # def download_decoder(self):
+    #     if self.is_verbose: print("downloading decoder params")
+    #     suffix = '' if self.is_mega else '_mini'
+    #     params = requests.get(MIN_DALLE_REPO + 'decoder{}.pt'.format(suffix))
+    #     with open(self.decoder_params_path, 'wb') as f: f.write(params.content)
 
 
     def download_decoder(self):
         if self.is_verbose: print("downloading decoder params")
         suffix = '' if self.is_mega else '_mini'
-        params = requests.get(MIN_DALLE_REPO + 'decoder{}.pt'.format(suffix))
-        with open(self.decoder_params_path, 'wb') as f: f.write(params.content)
+        download_weights(self.decoder_params_path, _WEIGHT_DOWNLOAD_URL.format(f'decoder{suffix}.pt'))
     
+
+    # def download_detokenizer(self):
+    #     if self.is_verbose: print("downloading detokenizer params")
+    #     params = requests.get(MIN_DALLE_REPO + 'detoker.pt')
+    #     with open(self.detoker_params_path, 'wb') as f: f.write(params.content)
 
     def download_detokenizer(self):
         if self.is_verbose: print("downloading detokenizer params")
-        params = requests.get(MIN_DALLE_REPO + 'detoker.pt')
-        with open(self.detoker_params_path, 'wb') as f: f.write(params.content)
+        download_weights(self.detoker_params_path, _WEIGHT_DOWNLOAD_URL.format('detoker.pt'))
+        #params = requests.get(MIN_DALLE_REPO + 'detoker.pt')
+        #with open(self.detoker_params_path, 'wb') as f: f.write(params.content)
 
 
     def init_tokenizer(self):

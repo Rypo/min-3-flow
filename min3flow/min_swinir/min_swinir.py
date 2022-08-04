@@ -12,30 +12,15 @@ from tqdm.auto import tqdm
 
 from .models.network_swinir import SwinIR as net
 from . import utils as util
+from ..utils.io import download_weights
 
 #MODULE_DIR = Path(__file__).resolve().parent
 #ROOT_DIR = MODULE_DIR.parent
-
-def _rel_model_root(model_file=None):
-    pretrained_dir = os.path.join(os.path.dirname(__file__), 'pretrained')
-    rel_model_path = os.path.relpath(pretrained_dir, os.getcwd())
-    if model_file is None:
-        return rel_model_path
-    return os.path.join(rel_model_path, model_file)
+_WEIGHT_DOWNLOAD_URL = 'https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/{}'
+_DEFAULT_WEIGHT_ROOT = "~/.cache/min3flow/swinir"
 
 
-
-def download_weights(model_path):
-    os.makedirs(os.path.dirname(model_path), exist_ok=True)
-    url = 'https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/{}'.format(os.path.basename(model_path))
-    r = requests.get(url, allow_redirects=True)
-    print(f'downloading model {model_path}')
-    with open(model_path, 'wb') as f:
-        f.write(r.content)
-
-
-def define_model(task, scale, large_model, training_patch_size, noise=None, jpeg=None, model_dir=_rel_model_root()):
-    weight_name = util.construct_weightname(task, scale, large_model, training_patch_size, noise, jpeg)
+def define_model(task, scale, large_model, training_patch_size, noise=None, jpeg=None, weight_root=None):
     # 001 classical image sr
     if task == 'classical_sr':
         model = net(upscale=scale, in_chans=3, img_size=training_patch_size, window_size=8,
@@ -87,12 +72,15 @@ def define_model(task, scale, large_model, training_patch_size, noise=None, jpeg
                     mlp_ratio=2, upsampler='', resi_connection='1conv')
         param_key_g = 'params'
 
-    model_path = os.path.join(model_dir, weight_name)
-    if not os.path.exists(model_path):
-        download_weights(model_path)
-
+    if weight_root is None:
+        weight_root = os.path.expanduser(_DEFAULT_WEIGHT_ROOT)
+    
+    weight_name = util.construct_weightname(task, scale, large_model, training_patch_size, noise, jpeg)
+    model_path = os.path.join(weight_root, weight_name)
+    model_path = download_weights(model_path, _WEIGHT_DOWNLOAD_URL.format(weight_name))
     pretrained_model = torch.load(model_path)
-    model.load_state_dict(pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model, strict=True)
+    #model.load_state_dict(pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model, strict=True)
+    model.load_state_dict(pretrained_model.get(param_key_g, pretrained_model), strict=True)
 
     return model
 
@@ -100,10 +88,10 @@ def define_model(task, scale, large_model, training_patch_size, noise=None, jpeg
 
 
 class SwinIR:
-    def __init__(self, task='real_sr', scale=4, large_model=True, training_patch_size=None, noise=None, jpeg=None, model_dir=_rel_model_root()) -> None:
+    def __init__(self, task='real_sr', scale=4, large_model=True, training_patch_size=None, noise=None, jpeg=None, weight_root=None) -> None:
         #self.args = args
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = define_model(task, scale, large_model, training_patch_size, noise, jpeg, model_dir).eval().to(self.device)
+        self.model = define_model(task, scale, large_model, training_patch_size, noise, jpeg, weight_root).eval().to(self.device)
 
         self.task = task
         self.scale = scale
@@ -115,6 +103,21 @@ class SwinIR:
         # minimal extract from setup() fuction
         self.border = scale if task in ['classical_sr', 'lightweight_sr'] else 0
         self.window_size = 7 if task in ['jpeg_car'] else 8
+
+    @classmethod
+    def for_denoising(cls, noise=15, color=True, model_dir=None):
+        task='color_dn' if color else 'gray_dn'
+        return cls(task, scale=1, large_model=False, training_patch_size=None, noise=noise, jpeg=None, model_dir=model_dir)
+
+    @classmethod
+    def for_jpegcar(cls, jpeg=40, model_dir=None):
+        return cls(task='jpeg_car', scale=1, large_model=False, training_patch_size=None, noise=None, jpeg=jpeg, model_dir=model_dir)
+    
+    @classmethod
+    def for_sr(cls, task='real_sr', scale=4, large_model=True, training_patch_size=None,  model_dir=None):
+        return cls(task=task, scale=scale, large_model=large_model, training_patch_size=training_patch_size, model_dir=model_dir)
+
+
 
     @property
     def _models_list(self):
@@ -156,7 +159,7 @@ class SwinIR:
 
     def postprocess_output(self, output: torch.tensor, h_old: int, w_old: int) -> torch.tensor:
         output = output[..., :h_old * self.scale, :w_old * self.scale]
-        output = output.detach().squeeze().float().clamp_(0, 1)#.cpu()#.numpy()
+        output = output.detach().squeeze().float().clamp_(0, 1)
         
         return output
 
@@ -206,7 +209,6 @@ class SwinIR:
 
     def extract_patches(self, img_lq: np.array, slice_dim=256, slice_overlap=0) -> np.array:
         """Extract patches from input image"""
-        scale = self.scale
         h, w, c = img_lq.shape
         
         slice_step = slice_dim - slice_overlap
@@ -217,7 +219,6 @@ class SwinIR:
             for w_slice in range(0, w, slice_step):
                 h_max = min(h_slice + slice_dim, h)
                 w_max = min(w_slice + slice_dim, w)
-                #print(f'[{h_slice:4d}:{h_max:4d}, {w_slice:4d}:{w_max:4d}]')
 
                 # extract slice
                 patches.append(img_lq[h_slice:h_max, w_slice:w_max])
@@ -233,6 +234,7 @@ class SwinIR:
         """
         if isinstance(img_lq, str):
             img_lq = Image.open(img_lq).convert('RGB')
+
         if isinstance(img_lq, Image.Image):
             img_lq = np.array(img_lq)
         
@@ -240,7 +242,7 @@ class SwinIR:
         #img_hq = np.zeros((h * scale, w * scale, c))
         patbatch,patinds = self.extract_patches(img_lq, slice_dim, slice_overlap)
         patches = torch.as_tensor(patbatch, dtype=torch.float).permute(0,3,1,2).div(255.) # B,H,W,C-RGB -> B, C-RGB, H, W
-        #patches = torch.from_numpy(patbatch[...,[2,1,0]].transpose(0,3,1,2)).float().div(255.) # B,H,W,C-BGR -> B, C-RGB, H, W
+        
         
         padded_patches = self._window_pad_img(patches).to(self.device)
         scaled_inds = torch.from_numpy(patinds*self.scale).to(self.device)
@@ -280,9 +282,7 @@ class SwinIR:
         print('Saved to:', outpath)
 
     @torch.inference_mode()
-    def upscale_prebatched(self, img, tile_size=256, tile_overlap=0, outpath=None):
-        if isinstance(img, str):
-            img = Image.open(img).convert('RGB')
+    def upscale_prebatched(self, img:torch.FloatTensor, outpath=None):
         
         imgs, h_old, w_old = self.preprocess_img(img)
         
