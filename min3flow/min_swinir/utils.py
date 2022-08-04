@@ -1,5 +1,5 @@
 import os
-import cv2
+
 import numpy as np
 import torch
 
@@ -107,6 +107,7 @@ def construct_weightname(task, scale=4, large_model=True, training_patch_size=No
     
 
 def save_image(output, outpath):
+    import cv2 # TODO: replace with PIL
     # save image
     if isinstance(output, torch.Tensor):
         output = output.detach_().squeeze().float().clamp_(0, 1).cpu().numpy()
@@ -120,10 +121,12 @@ def save_image(output, outpath):
     cv2.imwrite(outpath, output)
 
 
-def imread_norm(img_path, read_flag = cv2.IMREAD_COLOR):
+def imread_norm(img_path, read_flag = 1): # cv2.IMREAD_COLOR
+    import cv2 # TODO: replace with PIL
     return cv2.imread(img_path, read_flag).astype(np.float32) / 255.
 
 def get_image_pair(path, folder_lq, task, scale, noise, jpeg):
+    import cv2 # TODO: replace with PIL
     (imgname, imgext) = os.path.splitext(os.path.basename(path))
 
     # 001 classical image sr/ 002 lightweight image sr (load lq-gt image pairs)
