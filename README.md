@@ -49,3 +49,5 @@ pip install -e. # Not strictly required unless using scripts
   - [ ] Test if non-SR tasks are functional and useful, if not remove
 - [ ] General
   - [ ] Standardize all generation outputs as tensors, convert to Image.Image in Min3Flow class
+  - [ ] Weight options regarding function purity vs convinence trade-off
+  - [ ] Update documentation for new weight path scheme
