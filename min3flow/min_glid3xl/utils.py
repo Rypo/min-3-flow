@@ -98,6 +98,25 @@ def prepend_clip_score(filename, similarity):
 #         return torch.sort(sims, descending=True)
 #     return sims
 
+# def clip_sort(self, img_batch, text_embs):
+#     '''Sort image batch by cosine similarity to CLIP text embeddings.
+    
+#     Args:
+#         img_batch (tensor): uint8 tensor of shape (BS, C, H, W)
+#         text_embs (tensor): text embeddingings produced by clip_model
+
+#     Returns:
+#         tensor: sorted image batch of shape (BS, C, H, W)
+#     '''
+    
+#     # annoyingly, without first converting to PIL, the outputs differ enough to throw off rankings.
+#     imgs_proc = torch.stack([self.clip_preprocess(TF.to_pil_image(img)) for img in img_batch], dim=0)
+#     image_embs = self.clip_model.encode_image(imgs_proc.to(self.device))
+#     sims = F.cosine_similarity(image_embs, text_embs, dim=-1)
+#     ssims = torch.sort(sims, descending=True)
+
+#     return img_batch[ssims.indices]
+
 def _convert_image_to_rgb(image):
     return image.convert("RGB")
 

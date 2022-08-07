@@ -26,15 +26,50 @@ from .models.encoders.modules import BERTEmbedder
 
 from . import utils
 from ..utils.io import download_weights
+from ..utils import tensor_ops as tops
 
-_WEIGHT_DOWNLOAD_URL = 'https://dall-3.com/models/glid-3-xl/{}'
+
 _DEFAULT_WEIGHT_ROOT = "~/.cache/min3flow/glid3xl"
 
+# https://github.com/Jack000/glid-3-xl
+# https://github.com/LAION-AI/ldm-finetune
+
+_WEIGHT_DOWNLOAD_URLS = {
+        # ldm first stage (required)
+        'kl-f8.pt': 'https://dall-3.com/models/glid-3-xl/kl-f8.pt',
+        # text encoder (required)
+        'bert.pt': 'https://dall-3.com/models/glid-3-xl/bert.pt',
+        
+        # original diffusion model from CompVis
+        'base.pt': 'https://dall-3.com/models/glid-3-xl/diffusion.pt', 
+        # new model fine tuned on a cleaner dataset (will not generate watermarks, split images or blurry images
+        'finetune.pt': 'https://dall-3.com/models/glid-3-xl/finetune.pt', 
+        # The second finetune from jack000's glid-3-xl adds support for inpainting and can be used for unconditional output as well 
+        # by setting the inpaint image_embed to zeros. Additionally finetuned to use the CLIP text embed via cross-attention (similar to unCLIP).
+        'inpaint.pt': 'https://dall-3.com/models/glid-3-xl/inpaint.pt', 
+        # erlich is inpaint.pt finetuned on a dataset collected from LAION-5B named Large Logo Dataset. 
+        # It consists of roughly 100K images of logos with captions generated via BLIP using aggressive re-ranking and filtering.
+        'erlich.pt': 'https://huggingface.co/laion/erlich/resolve/main/model/ema_0.9999_120000.pt',
+        # Ongo is inpaint.pt finetuned on the Wikiart dataset consisting of about 100K paintings with captions generated via BLIP 
+        # using aggressive re-ranking and filtering. We also make use of the original captions which contain the author name and the painting title.
+        'ongo.pt': 'https://huggingface.co/laion/ongo/resolve/main/ongo.pt',
+        # puck has been trained on pixel art. While the underlying kl-f8 encoder seems to struggle somewhat with pixel art, results are still interesting.
+        'puck.pt': 'https://huggingface.co/laion/puck/resolve/main/puck.pt'
+}
+
+def _available_weights(stage='diffusion'):
+    all_weights = list(_WEIGHT_DOWNLOAD_URLS.keys())
+    if stage == 'diffusion':
+        return [w for w in all_weights if w not in ['bert.pt', 'kl-f8.pt']]
+    elif stage == 'encoder':
+        return ['bert.pt']
+    elif stage == 'ldm':
+        return ['kl-f8.pt']
+    
 
 class Glid3XL:
     def __init__(self, guidance_scale=3.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
-                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', 
-                 weight_root = None, seed=-1) -> None:
+                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None, device=None) -> None:
         
         self.guidance_scale = guidance_scale
         self.batch_size = batch_size
@@ -42,13 +77,9 @@ class Glid3XL:
         #self.skip_rate = skip_rate
         self.sample_method = sample_method
         self.H, self.W = int(imout_size[0]), int(imout_size[1])
-        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        self.seed = seed
+        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self._weight_root = weight_root if weight_root is not None else os.path.expanduser(_DEFAULT_WEIGHT_ROOT)
-        #self._diffusion_weight = diffusion_weight
-        #self._kl_path = kl_path
-        #self._bert_path = bert_path
 
         self.cond_fn = None
         self.cur_t = None
@@ -61,14 +92,23 @@ class Glid3XL:
 
 
     def _setup_init(self, diffusion_weight, kl_weight, bert_weight, sample_method, steps):
-        diffusion_path = os.path.join(self._weight_root, diffusion_weight)
-        diffusion_path = download_weights(diffusion_path, _WEIGHT_DOWNLOAD_URL.format(diffusion_weight))
-        
-        kl_path = os.path.join(self._weight_root, kl_weight)
-        kl_path = download_weights(kl_path, _WEIGHT_DOWNLOAD_URL.format(kl_weight))
-        
-        bert_path = os.path.join(self._weight_root, bert_weight)
-        bert_path = download_weights(bert_path, _WEIGHT_DOWNLOAD_URL.format(bert_weight))
+        wpaths = []
+        for stage,weight in zip(['diffusion','ldm','encoder'],[diffusion_weight, kl_weight, bert_weight]):
+            if os.path.exists(weight):
+                wpath = weight
+            else:
+                try: 
+                    dl_url = _WEIGHT_DOWNLOAD_URLS[weight]
+                    wpath = os.path.join(self._weight_root, weight)
+                    wpath = download_weights(wpath, dl_url)
+                except KeyError:
+                    raise ValueError(f"'{weight}' is not a path or known {stage} weight. Available weights aliases are {_available_weights()}")
+            
+            wpaths.append(wpath)
+
+            
+        diffusion_path, kl_path, bert_path = wpaths
+
         self._bert_path = bert_path # save for lazy loading bert
 
         self.model, self.diffusion, self.model_config = utils.timed(self.load_models, model_path=diffusion_path, sample_method=sample_method, steps=steps)
@@ -76,7 +116,7 @@ class Glid3XL:
         self.ldm = utils.timed(self.load_ldm, kl_path=kl_path)
         #self.bert = utils.timed(self.load_bert, bert_path=self._bert_path)
 
-        # Brittle and hacky way to set the sample function, fix
+        # TODO: ddpm doesn't exist? verify and remove option if intentional
         self.sample_fn = self.diffusion.plms_sample_loop_progressive if sample_method=='plms' else  self.diffusion.ddim_sample_loop_progressive 
 
 
@@ -88,7 +128,7 @@ class Glid3XL:
             model.to(device)
         
 
-    def init_model_config(self, sample_method, steps):
+    def init_model_config(self, sample_method, steps, model_state_dict):
         model_params = {
             'attention_resolutions': '32,16,8',
             'class_cond': False,
@@ -104,14 +144,14 @@ class Glid3XL:
             'resblock_updown': False,
             'use_fp16': False,
             'use_scale_shift_norm': False,
-            'clip_embed_dim': 768, #768 if 'clip_proj.weight' in model_state_dict else None,
-            'image_condition': False, #True if model_state_dict['input_blocks.0.0.weight'].shape[1] == 8 else False,
-            'super_res_condition': False, #True if 'external_block.0.0.weight' in model_state_dict else False,
+            'clip_embed_dim': 768 if 'clip_proj.weight' in model_state_dict else None,
+            'image_condition': True if model_state_dict['input_blocks.0.0.weight'].shape[1] == 8 else False,
+            'super_res_condition': True if 'external_block.0.0.weight' in model_state_dict else False,
         }
         
         if sample_method=='ddpm':
             model_params['timestep_respacing'] = 1000
-        if sample_method=='ddim':
+        elif sample_method=='ddim':
             model_params['timestep_respacing'] = 'ddim'+ (str(steps) if steps else '50')
         elif steps:
             model_params['timestep_respacing'] = str(steps)
@@ -124,19 +164,17 @@ class Glid3XL:
 
 
     def load_models(self, model_path, sample_method, steps):
-        model_config = self.init_model_config(sample_method, steps)
+        model_state_dict = torch.load(model_path, map_location='cpu')
+        model_config = self.init_model_config(sample_method, steps, model_state_dict)
         model, diffusion = create_model_and_diffusion(**model_config) # Load models
 
-        #model_state_dict = torch.load(model_path, map_location='cpu')
-        model.requires_grad_(False).eval().to(self.device)
-        model.load_state_dict(torch.load(model_path, map_location=self.device), strict=False)
+        model=model.requires_grad_(False).eval().to(self.device)
+        model.load_state_dict(model_state_dict, strict=False)
+        del model_state_dict
+        #model.load_state_dict(torch.load(model_path, map_location=self.device), strict=False)
         #model.requires_grad_(clip_guidance).eval().to(self.device)
 
-
-        if model_config['use_fp16']:
-            model.convert_to_fp16()
-        else:
-            model.convert_to_fp32()
+        model.convert_to_dtype(model_config['use_fp16'])
 
         
         return model, diffusion, model_config
@@ -152,7 +190,7 @@ class Glid3XL:
 
         return ldm
 
-    def load_clip(self): # clip
+    def load_clip(self): 
         clip_model, clip_preprocess = clip.load('ViT-L/14', device=self.device, jit=False)
         clip_model = clip_model.eval().requires_grad_(False)
 
@@ -201,15 +239,14 @@ class Glid3XL:
         text_emb_clip = self.clip_model.encode_text(toktext)
         text_emb_clip_blank = self.clip_model.encode_text(text_clip_blank)
 
-        
-        text_emb_norm = text_emb_clip[0] / text_emb_clip[0].norm(dim=-1, keepdim=True)
-
-        return text_emb, text_blank, text_emb_clip, text_emb_clip_blank, text_emb_norm
+        return text_emb, text_blank, text_emb_clip, text_emb_clip_blank#, text_emb_norm
 
     #@torch.inference_mode()
     def encode_image_grid(self, images, grid_idx=None):
         # assume grid for now, will break if 512x512 or similar. TODO: add argument later.
-        
+        if images is None:
+            return None
+
         if isinstance(grid_idx, int):
             init = images[[grid_idx]]
             #init = init.resize((self.W, self.H), Image.Resampling.LANCZOS)
@@ -221,46 +258,26 @@ class Glid3XL:
 
 
         #init = init.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
-        #h = self.ldm.encode(init * 2 - 1).sample() *  self.LDM_SCALE_FACTOR
-        h = self.ldm.encode(init.mul(2).sub(1)).sample() * self._LDM_SCALE_FACTOR #print(h.shape)
+        h = self.ldm.encode(init.mul(2).sub(1)).sample() * self._LDM_SCALE_FACTOR 
         #init = torch.cat(self.batch_size*2*[h], dim=0)
         #init = torch.repeat_interleave(h, 2*(self.batch_size//h.size(0)), dim=0, output_size=2*self.batch_size) # (2*BS, 4, H/8, W/8)
+        if h.size(0) == 1:
+            init = h.expand(2*self.batch_size, -1, -1, -1)
+        else:
+            osize=2*max(1,self.batch_size//h.size(0))
+            init = h.tile(osize,1,1,1) # (2*BS, 4, H/8, W/8)
         
-        osize=2*max(1,self.batch_size//h.size(0))
-        
-        init = h.tile(osize,1,1,1) # (2*BS, 4, H/8, W/8)
-        
-        if init.shape[0] < 2*self.batch_size:
-            # Case when number of grid_idx samples does not evenly divide 2*batch_size
-            # For now, just repeat encoding until 2*batch_size is reached
-            # TODO: assess the impact of this on image diversity
-            diff = 2*self.batch_size-init.shape[0]
+            if init.shape[0] < 2*self.batch_size:
+                # Case when number of grid_idx samples does not evenly divide 2*batch_size
+                # For now, just repeat encoding until 2*batch_size is reached
+                # TODO: assess the impact of this on image diversity
+                diff = 2*self.batch_size-init.shape[0]
 
-            init = torch.cat([init, init[-diff:]], dim=0)
+                init = torch.cat([init, init[-diff:]], dim=0)
             
-        #h.expand(32, -1, -1, -1)
 
         return init
 
-
-    def clip_sort(self, img_batch, text_embs):
-        '''Sort image batch by cosine similarity to CLIP text embeddings.
-        
-        Args:
-            img_batch (tensor): uint8 tensor of shape (BS, C, H, W)
-            text_embs (tensor): text embeddingings produced by clip_model
-
-        Returns:
-            tensor: sorted image batch of shape (BS, C, H, W)
-        '''
-        
-        # annoyingly, without first converting to PIL, the outputs differ enough to throw off rankings.
-        imgs_proc = torch.stack([self.clip_preprocess(TF.to_pil_image(img)) for img in img_batch], dim=0)
-        image_embs = self.clip_model.encode_image(imgs_proc.to(self.device))
-        sims = F.cosine_similarity(image_embs, text_embs, dim=-1)
-        ssims = torch.sort(sims, descending=True)
-
-        return img_batch[ssims.indices]
 
 
     def decode_sample(self, sample):
@@ -269,7 +286,7 @@ class Glid3XL:
         
         images = sample / self._LDM_SCALE_FACTOR
         
-        out=self.ldm.decode(images).add(1).div(2).clamp(0, 1) # shape: (batch_size, 3, height=256, width=256
+        out=self.ldm.decode(images).add(1).div(2).clamp(0, 1) # shape: (batch_size, 3, height=256, width=256)
 
         return out
 
@@ -299,7 +316,7 @@ class Glid3XL:
             self.cur_t = self.diffusion.num_timesteps - 1
 
             samples = self.sample_fn(
-                self.clf_free_sampling, #model_fn,
+                self.clf_free_sampling,
                 (self.batch_size*2, 4, int(self.H/8), int(self.W/8)),
                 clip_denoised=False,
                 model_kwargs=model_kwargs,
@@ -307,7 +324,7 @@ class Glid3XL:
                 device=self.device,
                 progress=True,
                 init_image=init_image_embed,
-                skip_timesteps=skip_ts #self.skip_ts #int(args.steps*args.skip_rate)#args.skip_timesteps,
+                skip_timesteps=skip_ts
             )
 
             for j, sample in enumerate(samples):
@@ -321,52 +338,30 @@ class Glid3XL:
 
            
         bsample = torch.cat(batch_samples, dim=0).detach_()
-        #print(bsample.shape)
+        
         return bsample
 
-    def _pre_sampling(self, text: str, init_image: str, negative: str='', grid_idx: int=0):
-        with torch.no_grad():
-            if text =='' and init_image != '':
-                text = Path(init_image).stem.replace('_', ' ')
-
-            if self._cache.get('texts',None) != (text, negative):
-                text_emb, text_blank, text_emb_clip, text_emb_clip_blank, text_emb_norm = utils.timed(self.encode_text, text=text, negative=negative)
-                self._text_emb_clip = text_emb_clip
-                self._cache['texts'] = (text, negative)
-
-                self._text_emb_norm = text_emb_norm
-        
-
-                self._model_kwargs = {
-                    "context": torch.cat([text_emb, text_blank], dim=0).float(),
-                    "clip_embed": torch.cat([text_emb_clip, text_emb_clip_blank], dim=0).float(), # if self.model_config['clip_embed_dim'] else None,
-                    "image_embed": None #image_embed (generated in GUI editting mode, unsupported for now)
-                }
-
-            init_image_embed = self.encode_image_grid(init_image, grid_idx=grid_idx)
-            return init_image_embed, self._model_kwargs
 
     #@functools.cache
-    def update_model_kwargs(self, text: str, negative: str=''):
+    def update_model_kwargs(self, text: str, negative: str='', image_embed=None):
+        #print('CLIPEMD, IMG_COND:',self.model_config['clip_embed_dim'], self.model_config['image_condition'])
+        if self.model_config['image_condition'] and image_embed is None:
+             # using inpaint model but no image is provided
+            image_embed = torch.zeros(self.batch_size*2, 4, self.H//8, self.W//8, device=self.device)
         if (text, negative) != self._cache.get('texts', None):
             
-            text_emb, text_blank, text_emb_clip, text_emb_clip_blank, text_emb_norm = utils.timed(self.encode_text, text=text, negative=negative)
+            text_emb, text_blank, text_emb_clip, text_emb_clip_blank = utils.timed(self.encode_text, text=text, negative=negative)
             self._text_emb_clip = text_emb_clip
-            #self._text_emb_norm = text_emb_norm
 
             self._model_kwargs = {
                 "context": torch.cat([text_emb, text_blank], dim=0).float(),
-                "clip_embed": torch.cat([text_emb_clip, text_emb_clip_blank], dim=0).float(), # if self.model_config['clip_embed_dim'] else None,
-                "image_embed": None #image_embed (generated in GUI editting mode, unsupported for now)
+                "clip_embed": torch.cat([text_emb_clip, text_emb_clip_blank], dim=0).float() if self.model_config['clip_embed_dim'] else None,
+                "image_embed": image_embed #(generated in GUI editting mode, unsupported for now)
             }
 
             self._cache['texts'] = (text, negative)
 
-    #@torch.inference_mode()
-    def gen_samples(self, init_image:(Image.Image|str), text: str,  negative: str='', num_batches: int=1, grid_idx:(int|list)=None, skip_rate=0.5, outdir: str=None,) -> torch.Tensor:
-        if self.seed > 0:
-            torch.manual_seed(self.seed)
-
+    def process_inputs(self, init_image: (Image.Image|str),  text: str):
         if text =='' and init_image != '':
             text = Path(init_image).stem.replace('_', ' ')
         
@@ -375,18 +370,26 @@ class Glid3XL:
             
         
         if isinstance(init_image, Image.Image):
-            init_image = utils.ungrid(init_image, h_out=256, w_out=256)
-            init = init.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
+            init_image = tops.ungrid(init_image, h_out=256, w_out=256)
+            init_image = init_image.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
 
-        skip_ts = int(self.steps*skip_rate)
+        return text, init_image
 
-        with torch.no_grad():
+
+    def gen_samples(self, init_image:(Image.Image|str), text: str,  negative: str='', num_batches: int=1, grid_idx:(int|list)=None, skip_rate=0.5,  outdir: str=None, seed=-1,) -> torch.Tensor:
+        if seed > 0:
+            torch.manual_seed(seed)
+
+
+        text, init_image = self.process_inputs(init_image, text)
+
+        with torch.no_grad(): # inference mode breaks clip guidance
             init_image_embed = self.encode_image_grid(init_image, grid_idx=grid_idx)
             self.update_model_kwargs(text, negative)
             
         
         with torch.inference_mode(self._inference_safe):
-            bsample = self.sample_batches(num_batches, init_image_embed, skip_ts, self._model_kwargs) 
+            bsample = self.sample_batches(num_batches, init_image_embed, skip_ts=int(self.steps*skip_rate), model_kwargs = self._model_kwargs) 
         
 
         output_images = self.decode_sample(bsample)
@@ -399,10 +402,6 @@ class Glid3XL:
         fname = Path(init_image).name if init_image else 'GEN__'+text.replace(' ', '_')+'.png'
         outpath = os.path.join(outdir,  f'{num_batches:05d}_{fname}')
         vutils.save_image(output_images, outpath, nrow=int((self.batch_size*max(1,num_batches)**0.5)), padding=0)
-        #self.save_sample(bsample, num_batches, outpath)
-            
-        #imout = self.decode_sample(bsample)
-        #return utils.to_pil(imout, nrow = int(np.math.sqrt(self.batch_size*max(1,num_batches))))
 
 
 
@@ -413,11 +412,11 @@ class Glid3XLClip(Glid3XL):
     # The non-clip guided model could temporarily unload clip and ldm while generating samples, and reload for final output.
     # The clip guided model needs to keep both models loaded for generating samples.
     def __init__(self, clip_guidance_scale=500, cutn=16, guidance_scale=3.0, batch_size=1, steps=100, sample_method='plms', imout_size=(256,256), 
-                 model_path='pretrained/finetune.pt', kl_path='pretrained/kl-f8.pt', bert_path='pretrained/bert.pt', seed=-1) -> None:
+                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root=None, device=None) -> None:
         
         assert batch_size==1, "Clip guided model currently only supports batch_size=1"
         super().__init__(guidance_scale=guidance_scale, batch_size=batch_size, steps=steps, sample_method=sample_method, imout_size=imout_size, 
-                 model_path=model_path, kl_path=kl_path, bert_path=bert_path, seed=seed)
+                        diffusion_weight=diffusion_weight, kl_weight=kl_weight, bert_weight=bert_weight, weight_root=weight_root, device=device)
 
         self.model = self.model.requires_grad_(True) # required for conditioning_fn, superclass sets False
         self._inference_safe = False
@@ -434,7 +433,7 @@ class Glid3XLClip(Glid3XL):
         
         kw = {
             'context': context[:self.batch_size],
-            'clip_embed': clip_embed[:self.batch_size], #if self.model_config['clip_embed_dim'] else None,
+            'clip_embed': clip_embed[:self.batch_size] if self.model_config['clip_embed_dim'] else None,
             'image_embed': image_embed[:self.batch_size] if image_embed is not None else None
         }
         n = self.batch_size
@@ -464,3 +463,6 @@ class Glid3XLClip(Glid3XL):
 
             return -torch.autograd.grad(loss, x)[0]
 
+
+
+            
