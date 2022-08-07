@@ -38,7 +38,7 @@ class MinDalle:
         is_reusable: bool = True,
         is_verbose = True
     ):
-        if device == None:
+        if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
         if is_verbose: print("using device", device)
         self.device = device

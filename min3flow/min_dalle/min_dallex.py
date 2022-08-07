@@ -23,21 +23,25 @@ torch.backends.cudnn.benchmark = False # Default: False
 torch.backends.cuda.matmul.allow_tf32 = True # Default: False
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 
+MIN_DALLE_REPO = 'https://huggingface.co/kuprel/min-dalle/resolve/main/'
+IMAGE_TOKEN_COUNT = 256
 
-ROOT_PATH = Path(__file__).parent.parent.parent
-MODEL_ROOT =  ROOT_PATH.joinpath('pretrained', 'min-dalle')
+_WEIGHT_DOWNLOAD_URL = 'https://huggingface.co/kuprel/min-dalle/resolve/main/{}'
+_DEFAULT_WEIGHT_ROOT = "~/.cache/min3flow/min_dalle"
 
 class MinDalleExt(MinDalle):
     def __init__(
         self,
-        model_variant: str = 'mega', 
+        models_root: str = None,
         dtype: torch.dtype = torch.float32,
+        device: str = None,
+        model_variant: str = 'mega', 
         is_reusable: bool = True,
-        models_root: str = MODEL_ROOT,#'pretrained',
         is_verbose = True
     ):
         is_mega = (model_variant != 'mini')
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
         self.dtype = dtype
         self.is_mega = is_mega
         self.is_reusable = is_reusable
@@ -51,7 +55,11 @@ class MinDalleExt(MinDalle):
         self.text_vocab_count = 50272 if is_mega else 50264
         self.image_vocab_count = 16415 if is_mega else 16384
 
-        if self.is_verbose: print("initializing MinDalle")
+        
+        if models_root is None: 
+            models_root = os.path.expanduser(_DEFAULT_WEIGHT_ROOT)
+
+        if self.is_verbose: print("initializing MinDalleExt")
         #model_name = 'dalle_bart_{}'.format('mega' if is_mega else 'mini')
         model_name = 'dalle_bart_{}'.format(model_variant)
         dalle_path = os.path.join(models_root, model_name)
