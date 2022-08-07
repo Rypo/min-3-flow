@@ -1,49 +1,12 @@
 '''Model configurations.'''
-import os
-from pathlib import Path
-
 import torch
 
-ROOT_PATH = Path(__file__).parent.parent
-MODEL_ROOT =  ROOT_PATH.joinpath('pretrained') 
-OUTPUT_ROOT =  ROOT_PATH.joinpath('output') 
-
-
-class _BaseConfigAlt:
-    '''Alternative BaseConfig for a single, non-local pretrained directory.'''
-    def __init__(self, pretrained_root=MODEL_ROOT, output_root=OUTPUT_ROOT, device=None):
-        self.pretrained_root = pretrained_root
-        self.output_root = output_root
-        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-
-    def __repr__(self) -> str:
-        
-        name = self.__class__.__name__
-        repr_str = ''
-        # hackery to alias model paths in repr
-        for k,v in self.to_dict().items():
-            if isinstance(v,Path) and hasattr(self, 'base_config'):
-                v = str(Path('{base_config.pretrained_root}')/v.relative_to(self.base_config.pretrained_root))
-            
-            repr_str += '{}={!r}, '.format(k,v)
-        # ref: https://stackoverflow.com/a/44595303
-        #return f'{name}({", ".join("{}={!r}".format(k, v) for k, v in self.__dict__.items())})'
-        return f'{name}({repr_str[:-2]})'
-
-    def to_dict(self) -> dict:
-        return {k:v for k,v in self.__dict__.items() if not k=='base_config'}
 
 class BaseConfig:
-    def __init__(self, seed=-1, device=None):
-        '''Base configuration class for all models
+    def __init__(self, device=None):
+        '''Base configuration class for all models'''
         
-        Args:
-            seed: (int): random seed
-            device: (str, torch.device): device to use
-        '''
-
-        self.seed = seed
+        #self.seed = seed
         self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -54,12 +17,12 @@ class BaseConfig:
         #return f'{name}({repr_str[:-2]})'
 
     def to_dict(self) -> dict:
-        return {k:v for k,v in self.__dict__.items() if not k=='base_config'}
+        return self.__dict__#{k:v for k,v in self.__dict__.items() if not k=='base_config'}
 
 
 
 class MinDalleConfig(BaseConfig):
-    def __init__(self, dtype:torch.dtype=torch.float16, is_mega:bool=True, is_reusable:bool=True, is_verbose=True, models_root:str=None, base_config:BaseConfig=None):
+    def __init__(self, dtype:torch.dtype=torch.float16, is_mega:bool=True, is_reusable:bool=True, is_verbose=True, models_root:str=None):
         '''Configuration for MinDalle
 
         Args:
@@ -67,21 +30,19 @@ class MinDalleConfig(BaseConfig):
             is_mega (bool): if True, uses the Mega-dalle model (default: True)
             is_reusable (bool): if True, keeps model in memory. If destroys and frees memory after each stage (default: True)
             is_verbose (bool): if True, prints out model info (default: True)
-            models_root (str): path to pretrained models. If None, defaults to min_dalle/pretrained (default: None)
-            base_config (BaseConfig): base configuration for the model (default: None)
+            models_root (str): path to pretrained models. If None, defaults to ~/.cache/min3flow/min_dalle (default: None)
+            
         '''
-
-        self.base_config = BaseConfig() if base_config is None else base_config
-        #self.models_root = self.base_config.pretrained_root.joinpath(models_root)
-        self.models_root = models_root #if models_root is not None else rel_model_root_dalle()
+        super().__init__()
+        self.models_root = models_root
         self.dtype = dtype
         self.is_mega = is_mega
         self.is_reusable = is_reusable
         self.is_verbose = is_verbose
-        self.device = self.base_config.device
+        
 
 class MinDalleExtConfig(BaseConfig):
-    def __init__(self, dtype:torch.dtype=torch.float16, model_variant:str='mega', is_reusable:bool=True, is_verbose=True, models_root:str=None, base_config:BaseConfig=None):
+    def __init__(self, dtype:torch.dtype=torch.float16, model_variant:str='mega', is_reusable:bool=True, is_verbose=True, models_root:str=None):
         '''Configuration for MinDalleExt (extension of MinDalle)
 
         Requires weights converted to pytorch with https://github.com/kuprel/min-dalle-flax
@@ -92,39 +53,41 @@ class MinDalleExtConfig(BaseConfig):
             model_variant (str): the dalle variant to use. Can be {'mega','mini', 'mega_beta', 'mega_bf16', 'mega_full'} (default: 'mega')
             is_reusable (bool): if True, keeps model in memory. If destroys and frees memory after each stage (default: True)
             is_verbose (bool): if True, prints out model info (default: True)
-            models_root (str): path to pretrained models. If None, defaults to min_dalle/pretrained (default: None)
-            base_config (BaseConfig): base configuration for the model (default: None)
+            models_root (str): path to pretrained models. If None, defaults to ~/.cache/min3flow/min_dalle (default: None)
+            
         '''
-
-        self.base_config = BaseConfig() if base_config is None else base_config
-        
-        #self.models_root = self.base_config.pretrained_root.joinpath(models_root)
-        self.models_root = models_root #if models_root is not None else rel_model_root_dalle()
-        self.model_variant = model_variant
+        super().__init__()
+        self.models_root = models_root
         self.dtype = dtype
-        self.is_reusable = is_reusable
-        
+        self.model_variant = model_variant
+        self.is_reusable: is_reusable
         self.is_verbose = is_verbose
-        self.seed = self.base_config.seed
+        self.device = self.base_config.device
+        
+
 
 class Glid3XLConfig(BaseConfig):
     def __init__(self, guidance_scale=3.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
-                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', 
-                 weight_root = None, base_config:BaseConfig=None):
+                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None):
         '''Configuration for Glid3XL
 
         Args:
             guidance_scale (float): classifier-free guidance scale. Values higher that ~5.0 have diminishing effects. (default: 3.0)
             batch_size (int): batch size (default: 16)
-            steps (int): number of steps per epoch (default: 100)
+            steps (int): total number of diffusion steps. Negligible difference higher than 250 (default: 100)
             sample_method (str): diffusion sampling method. Can be {'plms','ddim','ddpm'} (default: 'plms')
             imout_size (tuple(int,int)): output image size. Must be a multiple of 8 (default: (256,256))
-            model_path (str): path to diffusion model model weights. If None, defaults to min_glid3xl/pretrained/finetune.pt (default: None)
-            kl_path (str): path to LDM first stage model weights. If None, defaults to min_glid3xl/pretrained/kl-f8.pt (default: None)
-            bert_path (str): path to bert model weights. If None, defaults to min_glid3xl/pretrained/bert.pt (default: None)
+            diffusion_weight (str): alias or path to diffusion model weights. 
+                If not an existing path or in `weight_root`, treat as alias and attempt to download.
+            kl_weight (str): kl-f8.pt or path to LDM first stage model weights. (default: 'kl-f8.pt')
+                If not an existing path or in `weight_root` treat as alias and attempt to download.
+            bert_weight (str): bert.pt or path to bert model weights. (default: 'bert.pt')
+                If not an existing path or in `weight_root` treat as alias and attempt to download.
+            weight_root (str): path to pretrained models. (default: None)
+                If None, defaults to ~/.cache/min3flow/glid3_xl
         '''
 
-        self.base_config = BaseConfig() if base_config is None else base_config
+        super().__init__()
         self.guidance_scale = guidance_scale
         self.batch_size = batch_size
         self.steps = steps
@@ -137,13 +100,12 @@ class Glid3XLConfig(BaseConfig):
         self.bert_weight = bert_weight #if bert_path is not None else rel_model_root_glid3xl('bert.pt')
         self.weight_root = weight_root
         #self.base_config.pretrained_root.joinpath(bert_path)
-        self.seed = self.base_config.seed
+        #self.seed = self.base_config.seed
         
 
 class Glid3XLClipConfig(Glid3XLConfig):
     def __init__(self, clip_guidance_scale=500, cutn=16, guidance_scale=3.0, batch_size=1, steps=100, sample_method='plms', imout_size=(256,256), 
-                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', 
-                 weight_root = None, base_config:BaseConfig=None):
+                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None):
         '''Configuration for Glid3XLClip
 
         Args:
@@ -153,13 +115,17 @@ class Glid3XLClipConfig(Glid3XLConfig):
             steps (int): number of steps per epoch (default: 100)
             sample_method (str): diffusion sampling method. Can be {'plms','ddim','ddpm'} (default: 'plms')
             imout_size (tuple(int,int)): output image size. Must be a multiple of 8 (default: (256,256))
-            model_path (str): path to diffusion model model weights. If None, defaults to min_glid3xl/pretrained/finetune.pt (default: None)
-            kl_path (str): path to LDM first stage model weights. If None, defaults to min_glid3xl/pretrained/kl-f8.pt (default: None)
-            bert_path (str): path to bert model weights. If None, defaults to min_glid3xl/pretrained/bert.pt (default: None)
-            base_config (BaseConfig): base configuration for the model (default: None)
+            diffusion_weight (str): alias or path to diffusion model weights. 
+                If not an existing path or in `weight_root`, treat as alias and attempt to download.
+            kl_weight (str): kl-f8.pt or path to LDM first stage model weights. (default: 'kl-f8.pt')
+                If not an existing path or in `weight_root` treat as alias and attempt to download.
+            bert_weight (str): bert.pt or path to bert model weights. (default: 'bert.pt')
+                If not an existing path or in `weight_root` treat as alias and attempt to download.
+            weight_root (str): path to pretrained models. (default: None)
+                If None, defaults to ~/.cache/min3flow/glid3_xl
         '''
         assert batch_size==1, "Clip guided model currently only supports batch_size=1"
-        super().__init__(guidance_scale, batch_size, steps, sample_method, imout_size, diffusion_weight, kl_weight, bert_weight, weight_root, base_config)
+        super().__init__(guidance_scale, batch_size, steps, sample_method, imout_size, diffusion_weight, kl_weight, bert_weight, weight_root)
 
         self.clip_guidance_scale = clip_guidance_scale
         self.cutn = cutn
@@ -167,7 +133,7 @@ class Glid3XLClipConfig(Glid3XLConfig):
 
 
 class SwinIRConfig(BaseConfig):
-    def __init__(self, task='real_sr', scale=4, large_model=True, training_patch_size=None, noise=None, jpeg=None, weight_root=None, base_config:BaseConfig=None):
+    def __init__(self, task='real_sr', scale=4, large_model=True, training_patch_size=None, noise=None, jpeg=None, weight_root=None):
         '''Configuration for SwinIR
 
         In contrast to other configurations, the primary purpose of the arguments is to determine which model weights to use.
@@ -187,9 +153,7 @@ class SwinIRConfig(BaseConfig):
             base_config (BaseConfig): base configuration for the model (default: None)
 
         '''
-
-        self.base_config = BaseConfig() if base_config is None else base_config
-        
+        super().__init__()
         self.task = task
         self.scale = scale
         self.large_model = large_model
