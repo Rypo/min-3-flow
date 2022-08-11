@@ -1,13 +1,7 @@
-import os
-import glob
+
 import argparse
 from pathlib import Path
-from collections import OrderedDict
-import cv2
-
 import numpy as np
-import torch
-import requests
 from tqdm.auto import tqdm
 
 #from .models.network_swinir import SwinIR as net

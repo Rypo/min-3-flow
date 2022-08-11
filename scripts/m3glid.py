@@ -1,32 +1,27 @@
 import os
-import sys
 import gc
 import time
 import argparse
 from pathlib import Path
-from contextlib import contextmanager
+
 
 from PIL import Image
 import numpy as np
 
 import torch
 from min3flow.min_glid3xl import Glid3XL, Glid3XLClip
-from min3flow.min_glid3xl.min_glid3xl import _rel_model_root
 
-
-# MODULE_DIR = Path(__file__).resolve().parent
-# ROOT_DIR = MODULE_DIR.parent
-
-# print(os.path.dirname(__file__))
 
 
 def get_parser():
     # argument parsing
     parser = argparse.ArgumentParser(description="Glid-3 XL", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument('--model_path', type=str, default = _rel_model_root('finetune.pt'), help='path to the diffusion model')
-    parser.add_argument('--kl_path', type=str, default = _rel_model_root('kl-f8.pt'), help='path to the LDM first stage model')
-    parser.add_argument('--bert_path', type=str, default = _rel_model_root('bert.pt'), help='path to the bert model')
+    parser.add_argument('--diffusion_weight', type=str, default = 'finetune.pt', help='path to the diffusion model')
+    parser.add_argument('--kl_weight', type=str, default = 'kl-f8.pt', help='path to the LDM first stage model')
+    parser.add_argument('--bert_weight', type=str, default = 'bert.pt', help='path to the bert model')
+    parser.add_argument('--weight_root', type=str, default = None, help='path to directory containing the above models. If None, use user .cache')
+
 
     parser.add_argument('--outdir', type=str, default = 'output/1_diffuse/', help='path to image output directory')
 
@@ -49,9 +44,9 @@ def get_parser():
     parser.add_argument('--steps', type = int, default = 100, required = False, help='number of diffusion steps')
     parser.add_argument('--skip_rate', type = float, default = 0.5, required = False, help='percent of diffusion steps to skip')
 
-    parser.add_argument('--cpu', dest='cpu', action='store_true')
+    #parser.add_argument('--cpu', dest='cpu', action='store_true')
 
-    parser.add_argument('--sample_method', type=str, default='plms', choices=['plms', 'ddim', 'ddpm'], required = False, help='sampling method, ddim sets steps=50')
+    parser.add_argument('--sample_method', type=str, default='plms', choices=['plms', 'ddim', 'ddpm'], required = False, help='sampling method')
 
     # Clip Guidance arguments
 
@@ -82,10 +77,10 @@ def do_run():
             #skip_rate=args.skip_rate, 
             sample_method=args.sample_method,
             imout_size=(args.height,args.width), 
-            model_path=args.model_path, #'pretrained/finetuned.pt', 
-            kl_path=args.kl_path,       #'pretrained/kl-f8.pt', 
-            bert_path=args.bert_path,   #'pretrained/bert.pt', 
-            no_cuda=args.cpu
+            diffusion_weight=args.diffusion_weight, #'pretrained/finetune.pt', 
+            kl_weight=args.kl_weight,       #'pretrained/kl-f8.pt', 
+            bert_weight=args.bert_weight,   #'pretrained/bert.pt', 
+            weight_root=args.weight_root,
         )
     else:
         gxl = Glid3XLClip(
@@ -97,22 +92,24 @@ def do_run():
             #skip_rate=args.skip_rate, 
             sample_method=args.sample_method,
             imout_size=(args.height,args.width), 
-            model_path=args.model_path, #'pretrained/finetuned.pt', 
-            kl_path=args.kl_path,       #'pretrained/kl-f8.pt', 
-            bert_path=args.bert_path,   #'pretrained/bert.pt', 
-            no_cuda=args.cpu
+            diffusion_weight=args.diffusion_weight, #'pretrained/finetune.pt', 
+            kl_weight=args.kl_weight,       #'pretrained/kl-f8.pt', 
+            bert_weight=args.bert_weight,   #'pretrained/bert.pt', 
+            weight_root=args.weight_root,
         )
 
     print('Using device:', gxl.device)
     
     gxl.gen_samples(
-        text=args.text, 
         init_image=args.init_image, 
+        text=args.text, 
+        
         negative=args.negative, 
         num_batches=args.num_batches,
         grid_idx=args.grid_idx,
         skip_rate=args.skip_rate, 
-        outdir=args.outdir
+        outdir=args.outdir,
+        seed=args.seed,
     )
 
 
