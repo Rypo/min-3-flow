@@ -74,40 +74,40 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
     return np.array(betas)
 
 
-class ModelMeanType(enum.Enum):
-    """
-    Which type of output the model predicts.
-    """
+# class ModelMeanType(enum.Enum):
+#     """
+#     Which type of output the model predicts.
+#     """
 
-    PREVIOUS_X = enum.auto()  # the model predicts x_{t-1}
-    START_X = enum.auto()  # the model predicts x_0
-    EPSILON = enum.auto()  # the model predicts epsilon
-
-
-class ModelVarType(enum.Enum):
-    """
-    What is used as the model's output variance.
-
-    The LEARNED_RANGE option has been added to allow the model to predict
-    values between FIXED_SMALL and FIXED_LARGE, making its job easier.
-    """
-
-    LEARNED = enum.auto()
-    FIXED_SMALL = enum.auto()
-    FIXED_LARGE = enum.auto()
-    LEARNED_RANGE = enum.auto()
+#     PREVIOUS_X = enum.auto()  # the model predicts x_{t-1}
+#     START_X = enum.auto()  # the model predicts x_0
+#     EPSILON = enum.auto()  # the model predicts epsilon
 
 
-class LossType(enum.Enum):
-    MSE = enum.auto()  # use raw MSE loss (and KL when learning variances)
-    RESCALED_MSE = (
-        enum.auto()
-    )  # use raw MSE loss (with RESCALED_KL when learning variances)
-    KL = enum.auto()  # use the variational lower-bound
-    RESCALED_KL = enum.auto()  # like KL, but rescale to estimate the full VLB
+# class ModelVarType(enum.Enum):
+#     """
+#     What is used as the model's output variance.
 
-    def is_vb(self):
-        return self == LossType.KL or self == LossType.RESCALED_KL
+#     The LEARNED_RANGE option has been added to allow the model to predict
+#     values between FIXED_SMALL and FIXED_LARGE, making its job easier.
+#     """
+
+#     LEARNED = enum.auto()
+#     FIXED_SMALL = enum.auto()
+#     FIXED_LARGE = enum.auto()
+#     LEARNED_RANGE = enum.auto()
+
+
+# class LossType(enum.Enum):
+#     MSE = enum.auto()  # use raw MSE loss (and KL when learning variances)
+#     RESCALED_MSE = (
+#         enum.auto()
+#     )  # use raw MSE loss (with RESCALED_KL when learning variances)
+#     KL = enum.auto()  # use the variational lower-bound
+#     RESCALED_KL = enum.auto()  # like KL, but rescale to estimate the full VLB
+
+#     def is_vb(self):
+#         return self == LossType.KL or self == LossType.RESCALED_KL
 
 def lazy_tqdm(indices, progress):
     # Lazy import so that we don't depend on tqdm.
@@ -137,14 +137,14 @@ class GaussianDiffusion:
         self,
         *,
         betas,
-        model_mean_type,
-        model_var_type,
-        loss_type,
+        #model_mean_type,
+        #model_var_type,
+        #loss_type,
         rescale_timesteps=False,
     ):
-        self.model_mean_type = model_mean_type
-        self.model_var_type = model_var_type
-        self.loss_type = loss_type
+        #self.model_mean_type = model_mean_type
+        #self.model_var_type = model_var_type
+        #self.loss_type = loss_type
         self.rescale_timesteps = rescale_timesteps
 
         # Use float64 for accuracy.
@@ -340,9 +340,8 @@ class GaussianDiffusion:
 
         out = p_mean_var.copy()
         out["pred_xstart"] = self._predict_xstart_from_eps(x, t, eps)
-        out["mean"], _, _ = self.q_posterior_mean_variance(
-            x_start=out["pred_xstart"], x_t=x, t=t
-        )
+        out["mean"], _, _ = self.q_posterior_mean_variance(x_start=out["pred_xstart"], x_t=x, t=t)
+
         return out
 
     def p_sample( self, model, x, t, clip_denoised=True, denoised_fn=None, cond_fn=None, model_kwargs=None,):
@@ -393,11 +392,14 @@ class GaussianDiffusion:
         :return: a non-differentiable batch of samples.
         """
         final = None
-        for sample in self.p_sample_loop_progressive(model,shape,noise=noise,clip_denoised=clip_denoised,denoised_fn=denoised_fn,cond_fn=cond_fn,model_kwargs=model_kwargs,device=device,progress=progress,):
+        for sample in self.p_sample_loop_progressive(
+            model,shape,noise=noise,clip_denoised=clip_denoised,denoised_fn=denoised_fn,
+            cond_fn=cond_fn,model_kwargs=model_kwargs,device=device,progress=progress,
+        ):
             final = sample
         return final["sample"]
 
-    def p_sample_loop_progressive( self, model, shape, noise=None, clip_denoised=True, denoised_fn=None, cond_fn=None, model_kwargs=None, device=None, progress=False,):
+    def p_sample_loop_progressive(self, model, shape, noise=None, clip_denoised=True, denoised_fn=None, cond_fn=None, model_kwargs=None, device=None, progress=False,):
         """
         Generate samples from the model and yield intermediate samples from
         each timestep of diffusion.
@@ -413,12 +415,6 @@ class GaussianDiffusion:
             
             
         indices = list(range(self.num_timesteps))[::-1]
-
-        # if progress:
-        #     # Lazy import so that we don't depend on tqdm.
-        #     from tqdm.auto import tqdm
-
-        #     indices = tqdm(indices)
 
         for i in lazy_tqdm(indices, progress):
             t = th.tensor([i] * shape[0], device=device)
@@ -460,9 +456,9 @@ class GaussianDiffusion:
             out["pred_xstart"] * th.sqrt(alpha_bar_prev)
             + th.sqrt(1 - alpha_bar_prev - sigma ** 2) * eps
         )
-        nonzero_mask = (
-            (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
-        )  # no noise when t == 0
+        # no noise when t == 0
+        nonzero_mask = (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
+          
         sample = mean_pred + nonzero_mask * sigma * noise
         return {"sample": sample, "pred_xstart": out["pred_xstart"]}
 
@@ -481,8 +477,7 @@ class GaussianDiffusion:
         """
         assert eta == 0.0, "Reverse ODE only for deterministic path"
         out = self.p_mean_variance(model, x, t, clip_denoised=clip_denoised, denoised_fn=denoised_fn, model_kwargs=model_kwargs,)
-        # Usually our model outputs epsilon, but we re-derive it
-        # in case we used x_start or x_prev prediction.
+        # Usually our model outputs epsilon, but we re-derive it in case we used x_start or x_prev prediction.
         eps = (_extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x.shape) * x - out["pred_xstart"]) / _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x.shape)
         alpha_bar_next = _extract_into_tensor(self.alphas_cumprod_next, t, x.shape)
 
@@ -494,15 +489,19 @@ class GaussianDiffusion:
 
         return {"sample": mean_pred, "pred_xstart": out["pred_xstart"]}
 
-    def ddim_sample_loop( self, model, shape, noise=None, clip_denoised=True, denoised_fn=None, cond_fn=None, model_kwargs=None, device=None, progress=False, eta=0.0,):
+    def ddim_sample_loop(self, model, shape, noise=None, clip_denoised=True, denoised_fn=None, cond_fn=None, model_kwargs=None, device=None, progress=False, eta=0.0,):
         """
         Generate samples from the model using DDIM.
 
         Same usage as p_sample_loop().
         """
         final = None
-        for sample in self.ddim_sample_loop_progressive(model,shape,noise=noise,clip_denoised=clip_denoised,denoised_fn=denoised_fn,cond_fn=cond_fn,model_kwargs=model_kwargs,device=device,progress=progress,eta=eta,):
+        for sample in self.ddim_sample_loop_progressive(
+            model,shape,noise=noise,clip_denoised=clip_denoised,denoised_fn=denoised_fn,
+            cond_fn=cond_fn,model_kwargs=model_kwargs,device=device,progress=progress,eta=eta
+        ):
             final = sample
+
         return final["sample"]
 
     def ddim_sample_loop_progressive(
@@ -532,10 +531,7 @@ class GaussianDiffusion:
         
         indices = list(range(self.num_timesteps - skip_timesteps))[::-1]
         
-        if noise is not None:
-            img = noise
-        else:
-            img = th.randn(*shape, device=device)
+        img = noise if noise is not None else th.randn(*shape, device=device)
             
         if skip_timesteps and init_image is None:
             init_image = th.zeros_like(img)
@@ -544,11 +540,6 @@ class GaussianDiffusion:
             my_t = th.ones([shape[0]], device=device, dtype=th.long) * indices[0]
             img = self.q_sample(init_image, my_t, img)
 
-        # if progress:
-        #     # Lazy import so that we don't depend on tqdm.
-        #     from tqdm.auto import tqdm
-
-        #     indices = tqdm(indices)
 
         for i in lazy_tqdm(indices, progress):
             t = th.tensor([i] * shape[0], device=device)
@@ -638,16 +629,11 @@ class GaussianDiffusion:
             my_t = th.ones([shape[0]], device=device, dtype=th.long) * indices[0]
             img = self.q_sample(init_image, my_t, img)
 
-        # if progress:
-        #     # Lazy import so that we don't depend on tqdm.
-        #     from tqdm.auto import tqdm
-
-        #     indices = tqdm(indices)
 
         for i in lazy_tqdm(indices, progress):
             t = th.tensor([i] * shape[0], device=device)
             with th.no_grad():
-                out = self.prk_sample( model, img, t, clip_denoised=clip_denoised, denoised_fn=denoised_fn, cond_fn=cond_fn, model_kwargs=model_kwargs,)
+                out = self.prk_sample(model, img, t, clip_denoised=clip_denoised, denoised_fn=denoised_fn, cond_fn=cond_fn, model_kwargs=model_kwargs,)
                 yield out
                 img = out["sample"]
 
@@ -682,7 +668,7 @@ class GaussianDiffusion:
             final = sample
         return final["sample"]
 
-    def plms_sample( self, model, x, old_eps, t, clip_denoised=True, denoised_fn=None, cond_fn=None, model_kwargs=None,):
+    def plms_sample(self, model, x, old_eps, t, clip_denoised=True, denoised_fn=None, cond_fn=None, model_kwargs=None,):
         """
         Sample x_{t-1} from the model using fourth-order Pseudo Linear Multistep
         (https://openreview.net/forum?id=PlKWVd2yBkY).
@@ -698,7 +684,9 @@ class GaussianDiffusion:
         pred_xstart = self.process_xstart(pred_xstart, denoised_fn, clip_denoised, (-1,1))
         return {"sample": sample, "pred_xstart": pred_xstart, "eps": eps}
 
-    def plms_sample_loop_progressive( self, model, shape, noise=None, clip_denoised=True, denoised_fn=None, cond_fn=None, model_kwargs=None, device=None, init_image=None, skip_timesteps=0, progress=False,):
+    def plms_sample_loop_progressive(
+        self, model, shape, noise=None, clip_denoised=True, denoised_fn=None, 
+        cond_fn=None, model_kwargs=None, device=None, init_image=None, skip_timesteps=0, progress=False,):
         """
         Use PLMS to sample from the model and yield intermediate samples from
         each timestep of PLMS.
@@ -719,21 +707,15 @@ class GaussianDiffusion:
             my_t = th.ones([shape[0]], device=device, dtype=th.long) * indices[0]
             img = self.q_sample(init_image, my_t, img)
             
-        # if progress:
-        #     # Lazy import so that we don't depend on tqdm.
-        #     from tqdm.auto import tqdm
-
-        #     indices = tqdm(indices)
-
         old_eps = []
 
         for i in lazy_tqdm(indices, progress):
             t = th.tensor([i] * shape[0], device=device)
             with th.no_grad():
                 if len(old_eps) < 3:
-                    out = self.prk_sample( model, img, t, clip_denoised=clip_denoised, denoised_fn=denoised_fn, cond_fn=cond_fn, model_kwargs=model_kwargs,)
+                    out = self.prk_sample(model, img, t, clip_denoised=clip_denoised, denoised_fn=denoised_fn, cond_fn=cond_fn, model_kwargs=model_kwargs,)
                 else:
-                    out = self.plms_sample( model, img, old_eps, t, clip_denoised=clip_denoised, denoised_fn=denoised_fn, cond_fn=cond_fn, model_kwargs=model_kwargs,)
+                    out = self.plms_sample(model, img, old_eps, t, clip_denoised=clip_denoised, denoised_fn=denoised_fn, cond_fn=cond_fn, model_kwargs=model_kwargs,)
                     old_eps.pop(0)
                 old_eps.append(out["eps"])
                 yield out
@@ -745,7 +727,10 @@ class GaussianDiffusion:
         Same usage as p_sample_loop().
         """
         final = None
-        for sample in self.plms_sample_loop_progressive(model, shape, noise=noise, clip_denoised=clip_denoised, denoised_fn=denoised_fn, cond_fn=cond_fn, model_kwargs=model_kwargs, device=device, progress=progress,):
+        for sample in self.plms_sample_loop_progressive(
+            model, shape, noise=noise, clip_denoised=clip_denoised, denoised_fn=denoised_fn, 
+            cond_fn=cond_fn, model_kwargs=model_kwargs, device=device, progress=progress,
+        ):
             final = sample
         return final["sample"]
 
@@ -763,8 +748,6 @@ def _extract_into_tensor(arr, timesteps, broadcast_shape):
     res = th.from_numpy(arr).to(device=timesteps.device)[timesteps].float()
     
     dimdiff = len(broadcast_shape)-len(res.shape)
-    #dimfill = [[None]*dimdiff]
-    #while len(res.shape) < len(broadcast_shape):
     res = res[(...,) + (None,) * dimdiff]
         
     return res.expand(broadcast_shape)
