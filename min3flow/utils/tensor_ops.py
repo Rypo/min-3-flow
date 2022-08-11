@@ -19,14 +19,18 @@ def grid_from_images(images: torch.FloatTensor) -> Image.Image:
     image = Image.fromarray(image.detach().to('cpu').numpy())
     return image
 
-def ungrid(imgrid: Image.Image, h_out=256, w_out=256, channel_first=True):
-    
-    tgrid = torch.from_numpy(np.array(imgrid))
+def ungrid(imgrid: (torch.FloatTensor|Image.Image), hw_out:(int|tuple)=256, channel_first=True) -> torch.FloatTensor:
+    if isinstance(hw_out, int):
+        hw_out = (hw_out, hw_out)
+
+    if isinstance(imgrid, Image.Image):
+        imgrid = TF.to_tensor(imgrid)
+
     dord='c h w' if channel_first else 'h w c'
-    imbatch = rearrange(tgrid, f'(b1 h) (b2 w) c -> (b1 b2) {dord} ', h=h_out, w=w_out)
+    imbatch = rearrange(imgrid, f'c (b1 h) (b2 w) -> (b1 b2) {dord} ', h=hw_out[0], w=hw_out[1])
     return imbatch
 
-def mkgrid(imbatch, nrow=4):
+def mkgrid(imbatch, nrow=4) -> Image.Image:
     imgrid = TF.to_pil_image(rearrange(imbatch, '(b1 b2) c h w -> c (b1 h) (b2 w)', b1=nrow))
 
     return imgrid
