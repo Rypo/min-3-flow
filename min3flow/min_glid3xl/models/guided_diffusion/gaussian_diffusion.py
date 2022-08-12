@@ -137,14 +137,14 @@ class GaussianDiffusion:
         self,
         *,
         betas,
-        #model_mean_type,
-        #model_var_type,
-        #loss_type,
+        # model_mean_type=ModelMeanType.EPSILON,
+        # model_var_type=ModelVarType.FIXED_LARGE,
+        # loss_type=LossType.MSE,
         rescale_timesteps=False,
     ):
-        #self.model_mean_type = model_mean_type
-        #self.model_var_type = model_var_type
-        #self.loss_type = loss_type
+        #self.model_mean_type = ModelMeanType.EPSILON#model_mean_type
+        #self.model_var_type = ModelVarType.FIXED_LARGE#model_var_type
+        #self.loss_type = LossType.MSE#loss_type
         self.rescale_timesteps = rescale_timesteps
 
         # Use float64 for accuracy.

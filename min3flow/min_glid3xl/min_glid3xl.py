@@ -203,12 +203,12 @@ class Glid3XL:
         #del model_state_dict
         model=model.to(self.device)
 
-        # steps = str(steps) if steps else '50'
+        diffusion_steps = 1000
         timestep_respacing = {'ddpm': 1000, 'ddim': f'ddim{steps}'}.get(sample_method, str(steps)) #'27'
         
         diffusion = SpacedDiffusion(
-            use_timesteps=space_timesteps(steps, timestep_respacing),
-            betas=get_named_beta_schedule('linear', steps),
+            use_timesteps=space_timesteps(diffusion_steps, timestep_respacing),
+            betas=get_named_beta_schedule('linear', diffusion_steps),
             rescale_timesteps=True,
         )
 
@@ -315,7 +315,10 @@ class Glid3XL:
         if isinstance(samples, dict):
             samples = samples['pred_xstart'][:self.batch_size]
         
-        
+        # images = samples / self._LDM_SCALE_FACTOR
+        # out =  self.ldm.decode(images).add(1).div(2).clamp(0, 1)#.detach()
+        # return out
+
         decoded_images = []
         samples /= self._LDM_SCALE_FACTOR
        
@@ -337,7 +340,7 @@ class Glid3XL:
         model_out = self.model(combined, ts, **kwargs)
         eps, rest = model_out[:, :3], model_out[:, 3:]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
-        half_eps = torch.lerp(uncond_eps, cond_eps, self.guidance_scale)# * (cond_eps - uncond_eps)
+        half_eps = torch.lerp(uncond_eps, cond_eps, self.guidance_scale)
         #half_eps = uncond_eps + self.guidance_scale * (cond_eps - uncond_eps)
         
         eps = torch.cat([half_eps, half_eps], dim=0)
@@ -355,11 +358,10 @@ class Glid3XL:
         batch_samples = []
         for i in range(num_batches):
             self.cur_t = self.diffusion.num_timesteps - 1
-            print(self.cur_t)
 
             samples = self.sample_fn(
                 self.clf_free_sampling,
-                (self.batch_size*2, 4, self.H//8, self.W//8),
+                (self.batch_size*2, 4, int(self.H/8), int(self.W/8)),
                 clip_denoised=False,
                 model_kwargs=model_kwargs,
                 cond_fn=self.cond_fn,
@@ -380,6 +382,7 @@ class Glid3XL:
 
            
         bsample = torch.stack(batch_samples, dim=0).detach_()
+        #bsample = torch.cat(batch_samples, dim=0).detach_()
         
         return bsample
 

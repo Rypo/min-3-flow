@@ -172,8 +172,6 @@ class Min3Flow:
         image = TF.to_pil_image(tensor)
         return image
 
-    def to_tensor(self, image):
-        return TF.to_tensor(image)
 
     def show_grid(self, image: Union[torch.FloatTensor,Image.Image], cell_hw:Union[int,tuple]=None, plot_index=True, clip_sort_text:str=None) -> Image.Image:
         '''Show a grid of images with index annotations.
