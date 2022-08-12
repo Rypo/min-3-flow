@@ -9,7 +9,7 @@ import torch
 from .models import DalleBartEncoder, DalleBartDecoder, VQGanDetokenizer
 from .min_dalle import MinDalle
 
-def freeze(model, set_eval=True):
+def freeze(model, set_eval=False):
     for param in model.parameters():
         param.requires_grad_(False)
     if set_eval:
@@ -78,8 +78,19 @@ class MinDalleExt(MinDalle):
             self.init_decoder()
             self.init_detokenizer()
 
+    # def init_encoder(self):
+    #     super().init_encoder()
+    #     #self.encoder = freeze(self.encoder)
+    # def init_decoder(self):
+    #     super().init_decoder()
+    #     #self.decoder = freeze(self.decoder)
+    # def init_detokenizer(self):
+    #     super().init_detokenizer()
+    #     #self.detokenizer = freeze(self.detokenizer)
+
 
     def init_encoder(self):
+
         is_downloaded = os.path.exists(self.encoder_params_path)
         if not is_downloaded: self.download_encoder()
         if self.is_verbose: print("initializing DalleBartEncoder")
@@ -91,16 +102,16 @@ class MinDalleExt(MinDalle):
             text_token_count = self.text_token_count,
             glu_embed_count = self.glu_embed_count,
             device = self.device,
-        ).eval()#.to(self.device)
-        params = torch.load(self.encoder_params_path)
-        self.encoder.load_state_dict(params, strict=False)#.pin_memory()
-        del params
-        #self.encoder.load_state_dict(torch.load(self.encoder_params_path, map_location=self.device), strict=False)
-        self.encoder = freeze(self.encoder, set_eval=False).to(device=self.device, dtype=self.dtype)#, non_blocking=True)
+        ).eval()#.to(dtype=self.dtype,)
+
+        self.encoder = freeze(self.encoder).to(device=self.device)#.to(device=self.device, dtype=self.dtype)#, non_blocking=True)
+        self.encoder.load_state_dict(torch.load(self.encoder_params_path, map_location=self.device), strict=False)
+        self.encoder = self.encoder.to(dtype=self.dtype,)
         
 
 
     def init_decoder(self):
+        
         is_downloaded = os.path.exists(self.decoder_params_path)
         if not is_downloaded: self.download_decoder()
         if self.is_verbose: print("initializing DalleBartDecoder")
@@ -111,22 +122,21 @@ class MinDalleExt(MinDalle):
             glu_embed_count = self.glu_embed_count,
             layer_count = self.layer_count,
             device = self.device,
-        ).eval()#.to(self.device)
-        params = torch.load(self.decoder_params_path)
-        self.decoder.load_state_dict(params, strict=False)
-        del params
-        #self.decoder.load_state_dict(torch.load(self.decoder_params_path, map_location=self.device), strict=False)
-        self.decoder = freeze(self.decoder, set_eval=False).to(device=self.device, dtype=self.dtype)#, non_blocking=True)
+        ).eval()#.to(dtype=self.dtype,)
+
+        self.decoder = freeze(self.decoder).to(device=self.device)#.to(device=self.device, dtype=self.dtype)#, non_blocking=True)
+        self.decoder.load_state_dict(torch.load(self.decoder_params_path, map_location=self.device), strict=False)
+        self.decoder = self.decoder.to(dtype=self.dtype,)
         
 
 
     def init_detokenizer(self):
+
         is_downloaded = os.path.exists(self.detoker_params_path)
         if not is_downloaded: self.download_detokenizer()
         if self.is_verbose: print("initializing VQGanDetokenizer")
-        self.detokenizer = VQGanDetokenizer().eval()
+        self.detokenizer = VQGanDetokenizer().eval()#.to(dtype=self.dtype,)
 
-        params = torch.load(self.detoker_params_path)
-        self.detokenizer.load_state_dict(params, strict=False)
-        del params
-        self.detokenizer = freeze(self.detokenizer, set_eval=False).to(device=self.device, dtype=self.dtype)#.to(self.device)#, non_blocking=True)
+        self.detokenizer = freeze(self.detokenizer).to(device=self.device)#.to(device=self.device, dtype=self.dtype)#.to(self.device)#, non_blocking=True)
+        self.detokenizer.load_state_dict(torch.load(self.detoker_params_path, map_location=self.device), strict=False)
+        self.detokenizer = self.detokenizer.to(dtype=self.dtype,)
