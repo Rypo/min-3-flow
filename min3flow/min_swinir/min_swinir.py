@@ -88,9 +88,8 @@ def define_model(task, scale, large_model, training_patch_size, noise=None, jpeg
 
 
 class SwinIR:
-    def __init__(self, task='real_sr', scale=4, large_model=True, training_patch_size=None, noise=None, jpeg=None, weight_root=None) -> None:
-        #self.args = args
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    def __init__(self, task='real_sr', scale=4, large_model=True, training_patch_size=None, noise=None, jpeg=None, weight_root=None, device=None) -> None:
+        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = define_model(task, scale, large_model, training_patch_size, noise, jpeg, weight_root).eval().to(self.device)
 
         self.task = task
@@ -138,6 +137,8 @@ class SwinIR:
 
     def _window_pad_img(self, img: torch.tensor, window_size=8) -> torch.tensor:
         """pad input image to be a multiple of window_size (pretrained with window_size=8). (from the official repo)"""
+        if img.ndim == 3:
+            img = img.unsqueeze(0)
         _, _, h_old, w_old = img.size()
         h_new = (h_old // window_size + 1) * window_size
         w_new = (w_old // window_size + 1) * window_size
