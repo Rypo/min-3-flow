@@ -58,6 +58,27 @@ def space_timesteps(num_timesteps, section_counts):
         start_idx += size
     return set(all_steps)
 
+def altspace_timesteps(num_timesteps, section_counts):
+    '''ddim logic matches space_timesteps. non-ddim logic is off by one when not evenly divisible'''
+    if isinstance(section_counts, str):  
+        if section_counts.startswith("ddim"):
+            desired_count = int(section_counts.strip("ddim"))
+            out = set(range(0, num_timesteps, np.math.ceil(num_timesteps/desired_count)))
+            if len(out) != desired_count or desired_count == 1:
+                raise ValueError(f"cannot create exactly {num_timesteps} steps with an integer stride")
+            
+            return out
+            
+        section_counts = [int(x) for x in section_counts.split(",")]
+        
+    n_secs = len(section_counts)
+    fsize_per = num_timesteps/n_secs
+    start,end = (fsize_per*np.c_[0:n_secs,1:n_secs+1]-[0,1]).T
+    all_steps=np.concatenate([np.linspace(s, e, n) for s,e,n in zip(start,end,section_counts)]).round().astype(int)
+    #np.r_[tuple(np.s_[s:e:n*1j] for s,e,n in zip(start,end,section_counts))].round().astype(int)
+    #np.hstack([np.r_[s:e:n*1j] for s,e,n in zip(start,end,section_counts)]).round().astype(int)
+    return set(all_steps)
+
 
 class SpacedDiffusion(GaussianDiffusion):
     """
