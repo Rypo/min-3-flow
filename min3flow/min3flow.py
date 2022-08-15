@@ -1,5 +1,7 @@
+import os
 import gc
-from pathlib import Path
+import warnings
+
 from typing import  Union
 
 import numpy as np
@@ -94,7 +96,9 @@ class Min3Flow:
                 if self.model_dalle is not None: self.model_dalle._to('cpu') 
                 if self.model_glid3xl is not None: self.model_glid3xl._to('cpu')
                 if self.model_swinir is not None: self.model_swinir._to(self.device)  
-
+        
+        self._cache['active_stage'] = stage
+         
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -132,110 +136,23 @@ class Min3Flow:
             supercondition_factor=supercondition_factor,
             is_verbose=True
         )
-        self._cache['text'] = text
+        self._cache['gen_text'] = text
         self._cache['grid_size'] = grid_size
         return image
 
-    @torch.inference_mode()
-    def clip_sort(self, img_batch, text):
-        '''Sort image batch by cosine similarity to CLIP text embeddings.
-        
-        Args:
-            img_batch (tensor): float tensor of shape (N, C, H, W)
-            text (str): text to encode and use for similarity
-
-        Returns:
-            tensor: image batch sorted by clip score of shape (N, C, H, W)
-        '''
-        if self._clip_model is None:
-            
-            self._clip_model, self._clip_preprocess = clip.load('ViT-L/14', device=self.device, jit=True)
-            self._clip_model = self._clip_model.eval()
-
-        toks = clip.tokenize([text], truncate=True)
-        imgs = torch.stack([self._clip_preprocess(TF.to_pil_image(i)) for i in img_batch],dim=0)
-
-        
-        self._clip_model=self._clip_model.to(self.device)
-        scos = self._clip_model(imgs.to(self.device),toks.to(self.device))[0].squeeze().sort(descending=True)
-        self._clip_model.to('cpu')
-
-        return img_batch[scos.indices]
-
-    def to_image(self, tensor, n_rows=None):
-        if tensor.ndim == 4:
-            if n_rows is None:
-                n_rows = round(tensor.shape[0]**0.5)
-            tensor = vutils.make_grid(tensor, nrow=n_rows, padding=0, normalize=False)
-        
-        # will fail if (H,W,C) from min_dalle
-        image = TF.to_pil_image(tensor)
-        return image
-
-
-    def show_grid(self, image: Union[torch.FloatTensor,Image.Image], cell_hw:Union[int,tuple]=None, plot_index=True, clip_sort_text:str=None) -> Image.Image:
-        '''Show a grid of images with index annotations.
-
-        Args:
-            image (FloatTensor | Image): Image grid to show.
-            cell_hw (int | tuple(int,int)): The height,width of each image in the grid. (default: None)
-                Must specify if image is not a batched FloatTensor of shape (N,C,H,W).
-            plot_index (bool): Whether to plot the index of each image in the grid. (default: True)
-            clip_sort_text (str): Text to use for sorting images by clip score. (default: None)
-                Will load clip model if not None, using additional GPU memory.
-
-        Returns:
-            Image.Image: A grid of images with index annotations.
-        '''
-
-        if isinstance(image, Image.Image) or image.ndim == 3:
-            assert cell_hw is not None, 'cell_hw must be specified when passing a PIL image or 3-dim tensor.'
-            image = tops.ungrid(image, hw_out=cell_hw)
-            
-
-        N,C,H,W = image.shape
-        
-        n_rows = int(N**0.5)
-        n_cols = int(np.ceil(N / n_rows))
-
-        if clip_sort_text is not None:
-            image = self.clip_sort(image, clip_sort_text)
-         
-        image = self.to_image(image, n_rows=n_rows)
-        
-        if not plot_index:
-            return image
-
-        
-
-        imgc = image.copy()
-        draw = ImageDraw.Draw(imgc)
-        try:
-            fnt = ImageFont.truetype("DejaVuSans.ttf", 16*(W//256))
-        except OSError as e:
-            fnt = ImageFont.truetype("arial.ttf", 16*(W//256))
-
-        
-        for i,(x,y) in enumerate(np.mgrid[:n_rows,:n_cols].T.reshape(-1,2)*[W,H]):
-            if i < N:
-                draw.text((x, y), str(i), (255, 255, 255), font=fnt, stroke_width=1, stroke_fill=(0,0,0))
-
-
-        return imgc
-
-
     
-    def diffuse(self, init_image, grid_idx:Union[int,list]=None, skip_rate:float=0.5, text:str=None, negative:str='', num_batches:int=1, seed=None) -> Image.Image:
+    def diffuse(self, text:str=None, init_image:torch.FloatTensor=None, grid_idx:Union[int,list]=None, skip_rate:float=0.5,  negative:str='', num_batches:int=1, seed=None) -> Image.Image:
         '''Perform diffusion sampling on 1 or more images using Glid3XL or Glid3XLClip.
         
         Args:
-            init_image (Image.Image): Initial image to seed the sampling.
+            text (str): Text prompt to generate images from. (default: None)
+                If None, use the last text prompt used. 
+            init_image (FloatTensor): Initial image to seed the sampling. (default: None)
+                If None, will generate images from scratch using the text prompt.
             grid_idx (int, list): Index or list of indices of the image in the grid to sample. (default: None)
                 Use Min3Flow.show_grid to display grid indices overlay. If None, use all images. 
             skip_rate (float): Percent of diffusion steps to skip. (default: 0.5)
                 Values near 1 will minimally change the init_image, near 0 will significantly change the input image. 
-            text (str): Text prompt to generate images from. (default: None)
-                If None, use the last text prompt used. 
             negative (str): Negative Text prompt to oppose text prompt. (default: '')
             num_batches (int): Number of batches of size batch_size to run. (default: 1)
             seed (int): Random seed for reproducibility. (default: None)
@@ -248,8 +165,11 @@ class Min3Flow:
         self._begin_stage('diffuse')
 
         if text is None:
-            text = self._cache['text']
+            text = self._cache['gen_text']
             print(f'Using last text prompt: "{text}"')
+            
+        self._cache['dif_text'] = text
+
         
         inference_safe = self._cache.get('inference_safe', None)
         if self.model_glid3xl is None:
@@ -278,11 +198,11 @@ class Min3Flow:
         return image
 
     @torch.inference_mode()
-    def upscale(self, init_image: Image.Image, tile:Union[int,bool]=None, tile_overlap: int=0) -> Image.Image:
+    def upscale(self, init_image: torch.FloatTensor, tile:Union[int,bool]=None, tile_overlap: int=0) -> Image.Image:
         '''Upscale an image using SwinIR.
 
         Args:
-            init_image (Image.Image): image to upsample.
+            init_image (FloatTensor): image to upsample.
             tile (int): Patch size for sliding window upsampling. (default: None). 
                 If integer, will partition init_image into (tile x tile) size patches, 
                 upsample each patch, then construct the final image from the patches. 
@@ -315,3 +235,139 @@ class Min3Flow:
             image = self.model_swinir.upscale_patchwise(init_image, tile=tile, tile_overlap=tile_overlap)
 
         return image
+
+
+    @torch.inference_mode()
+    def clip_sort(self, img_batch, text) -> torch.return_types.sort:
+        '''Sort image batch by cosine similarity to CLIP text embeddings.
+        
+        Args:
+            img_batch (tensor): float tensor of shape (N, C, H, W)
+            text (str): text to encode and use for similarity
+
+        Returns:
+            torch.sort: torch namedtuple(values,indices) of desc-sorted clip scores
+        '''
+        if self._clip_model is None:
+            _name = 'ViT-L/14'+'@336px'
+            self._clip_model, self._clip_preprocess = clip.load(_name, device=self.device, jit=True)
+            self._clip_model = self._clip_model.eval()
+
+        toks = clip.tokenize([text], truncate=True)
+        imgs = torch.stack([self._clip_preprocess(TF.to_pil_image(i)) for i in img_batch],dim=0)
+
+        
+        self._clip_model=self._clip_model.to(self.device)
+        scos = self._clip_model(imgs.to(self.device),toks.to(self.device))[0].squeeze().sort(descending=True)
+        self._clip_model.to('cpu')
+        
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        return scos
+
+
+
+    def show_grid(self, image: Union[torch.FloatTensor,Image.Image], cell_hw:Union[int,tuple]=None, plot_index=True, clip_sort_text:str=None) -> Image.Image:
+        '''Show a grid of images with index annotations.
+
+        Args:
+            image (FloatTensor | Image): Image grid to show.
+            cell_hw (int | tuple(int,int)): The height,width of each image in the grid. (default: None)
+                Must specify if image is not a batched FloatTensor of shape (N,C,H,W).
+            plot_index (bool): Whether to plot the index of each image in the grid. (default: True)
+            clip_sort_text (str): Text to use for sorting images by clip score. (default: None)
+                Will load clip model if not None, using additional GPU memory.
+
+        Returns:
+            Image.Image: A grid of images with index annotations.
+        '''
+
+        if isinstance(image, Image.Image):
+            assert cell_hw is not None, 'cell_hw must be specified when passing a PIL image.'
+            image = tops.ungrid(image, hw_out=cell_hw)
+        elif image.ndim == 3:
+            if cell_hw is None:
+                # TRADEOFF: If image is a pre-grid tensor (e.g. from vutils.make_grid)) this will not give the desired result.
+                # But, this is less likely to occur than having a single image passed to this function.
+                # Both swinir and Glid3XLClip can/will return 1 image. From a useablity standpoint, just returning the image
+                # is better than throwing an error and require a different function to handle the single image case. 
+                warnings.warn('Note: Unbatched tensors are assumed to be a single image. To treat as a grid, explictly set `cell_hw`')
+                return tops.to_image(image)
+            else:
+                image = tops.ungrid(image, hw_out=cell_hw)
+            
+
+        N,C,H,W = image.shape
+        
+        n_rows = int(N**0.5)
+        n_cols = int(np.ceil(N / n_rows))
+
+        idx = np.arange(N)
+        if clip_sort_text is not None:
+            scores = self.clip_sort(image, clip_sort_text)
+            image = image[scores.indices]
+            idx = scores.indices.cpu().numpy()
+            
+         
+        image = tops.to_image(image, n_rows=n_rows)
+        
+        if not plot_index:
+            return image
+
+        imgc = image.copy()
+        draw = ImageDraw.Draw(imgc)
+        try:
+            fnt = ImageFont.truetype("DejaVuSans.ttf", 16*(W//256))
+        except OSError as e:
+            fnt = ImageFont.truetype("arial.ttf", 16*(W//256))
+
+        
+        for i,(x,y) in enumerate(np.mgrid[:n_rows,:n_cols].T.reshape(-1,2)*[W,H]):
+            if i < N:
+                draw.text((x, y), str(idx[i]), (255, 255, 255), font=fnt, stroke_width=1, stroke_fill=(0,0,0))
+
+
+        return imgc
+
+    def save_images(self, image:Union[torch.FloatTensor,Image.Image], as_grid=True, cell_hw=None, outdir='output/results'):
+        '''Save images to disk.
+        
+        Args:
+            image (FloatTensor | Image): Grid of images to save.
+            as_grid (bool): Whether to save as a grid. (default: True)
+            cell_hw (int | tuple(int,int)): The height,width of each image in the grid. (default: None)
+                Must specify if image is not a batched FloatTensor of shape (N,C,H,W).
+            outdir (str): output dir path. (default: None)
+                If None, will save to output/results/<last_used_text_prompt>.png if as_grid=True
+                else output/results/<last_used_text_prompt>__<idx>.png
+        '''
+        os.makedirs(outdir, exist_ok=True)
+        
+        gen_text = self._cache.get('gen_text',None)
+        dif_text = self._cache.get('dif_text',None)
+        if self._cache.get('active_stage') == 'diffuse' and dif_text is not None:
+            text = dif_text
+        else:
+            text = gen_text
+        #text = (gen_text if gen_text is not None else dif_text)
+        if text is None:
+            text = 'result'
+            warnings.warn('no prompt text found, saving to result.png')
+        text = text.replace(' ','_')
+
+        if as_grid:
+            image = self.show_grid(image, cell_hw, plot_index=False)
+            path = os.path.join(outdir, '{}.png'.format(text))
+            image.save(path)
+            print('saved to {}'.format(path))
+        else:
+            path = os.path.join(outdir, '{}__{:03d}.png')
+            for i,img in enumerate(image):
+                
+                img = TF.to_pil_image(img)
+                img.save(path.format(text,i))
+
+       
+       
+        

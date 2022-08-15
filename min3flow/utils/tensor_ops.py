@@ -12,6 +12,16 @@ def to_pil(tensor, nrow):
     imgrid = vutils.make_grid(tensor.detach_().cpu().clamp(0,1).squeeze(0), nrow=nrow, padding=0, pad_value=1)
     return TF.to_pil_image(imgrid)
 
+def to_image(tensor, n_rows=None):
+    if tensor.ndim == 4:
+        if n_rows is None:
+            n_rows = round(tensor.shape[0]**0.5)
+        tensor = vutils.make_grid(tensor, nrow=n_rows, padding=0, normalize=False)
+    
+    # will fail if (H,W,C) from min_dalle
+    image = TF.to_pil_image(tensor)
+    return image
+
 def grid_from_images(images: torch.FloatTensor) -> Image.Image:
     grid_size = int(np.math.sqrt(images.shape[0]))
     images = images.reshape([grid_size] * 2 + list(images.shape[1:]))
