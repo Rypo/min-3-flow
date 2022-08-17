@@ -1,5 +1,8 @@
+
+from typing import Union
 import numpy as np
 from PIL import Image
+
 
 
 import torch
@@ -29,7 +32,7 @@ def grid_from_images(images: torch.FloatTensor) -> Image.Image:
     image = Image.fromarray(image.detach().to('cpu').numpy())
     return image
 
-def ungrid(imgrid: (torch.FloatTensor|Image.Image), hw_out:(int|tuple)=256, channel_first=True) -> torch.FloatTensor:
+def ungrid(imgrid: Union[torch.FloatTensor,Image.Image], hw_out:Union[int,tuple]=256, channel_first=True) -> torch.FloatTensor:
     if isinstance(hw_out, int):
         hw_out = (hw_out, hw_out)
 

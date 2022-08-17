@@ -1,8 +1,7 @@
 import os
 import gc
-
-import functools
 from pathlib import Path
+from typing import  Union
 from contextlib import contextmanager
 
 from PIL import Image
@@ -227,7 +226,7 @@ class Glid3XL:
         return ldm
 
     def load_clip(self): 
-        clip_model, clip_preprocess = clip.load('ViT-L/14', device=self.device, jit=False)
+        clip_model, clip_preprocess = clip.load('ViT-L/14@336px', device=self.device, jit=False)
         clip_model = clip_model.eval().requires_grad_(False)
 
         return clip_model, clip_preprocess
@@ -322,7 +321,6 @@ class Glid3XL:
         decoded_images = []
         samples /= self._LDM_SCALE_FACTOR
        
-        #return self.ldm.decode(samples.flatten(0,1)).add(1).div(2).clamp(0, 1).detach()
         # shape: (num_batches, batch_size, 3, height=256, width=256)
 
         for sample in samples:
@@ -425,7 +423,7 @@ class Glid3XL:
 
 
 
-    def process_inputs(self, init_image: (Image.Image|str),  text: str):
+    def process_inputs(self,  text: str, init_image: Union[Image.Image,str]):
         if text =='' and init_image != '':
             text = Path(init_image).stem.replace('_', ' ')
         
@@ -439,15 +437,15 @@ class Glid3XL:
         return text, init_image
 
 
-    def gen_samples(self, init_image:(Image.Image|str), text: str,  negative: str='', num_batches: int=1, grid_idx:(int|list)=None, skip_rate=0.5,  outdir: str=None, seed=-1,) -> torch.Tensor:
+    def gen_samples(self, text: str, init_image:Union[torch.FloatTensor,Image.Image], negative: str='', num_batches: int=1, grid_idx:Union[int,list]=None, skip_rate=0.5,  outdir: str=None, seed=-1,) -> torch.Tensor:
         if seed > 0:
             torch.manual_seed(seed)
 
 
-        text, init_image = self.process_inputs(init_image, text)
+        text, init_image = self.process_inputs(text, init_image)
 
         with torch.no_grad(): # inference_mode breaks clip guidance
-            init_image_embed = self.encode_image_grid(init_image, grid_idx=grid_idx).to(dtype=self.dtype)
+            init_image_embed = self.encode_image_grid(init_image, grid_idx=grid_idx)#.to(dtype=self.dtype)
             model_kwargs = self.make_model_kwargs(text, negative)
 
         #print('init_image_embed, context, clip_embed, image_embed')
