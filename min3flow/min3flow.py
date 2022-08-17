@@ -110,8 +110,9 @@ class Min3Flow:
             text (str): Text prompt to generate images from.
             grid_size (int): Size of image output grid in x,y. E.g. grid_size=4 produces 16 (256,256) images. (default: 4)
             supercondition_factor (int): Higher values better match text prompt, but narrow image out variety. (default: 16)
-            temperature (float): Values > 1 supress the influence of the most probable tokens in top_k, providing more diverse sampling. (default: 1.0)
+            temperature (float): High temperature increases the probability of sampling low scoring image tokens. (default: 1.0)
             top_k (int): The number of most probable tokens to use when sampling each image token. (default: 256)
+                Reducing top_k and/or increasing temperature increases diversity at the expense coherency.  
             seed (int): Random seed for reproducibility. (default: None)
                 If None, use global_seed. If negative, use no seed.
 
