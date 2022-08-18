@@ -321,7 +321,10 @@ class Min3Flow:
         try:
             fnt = ImageFont.truetype("DejaVuSans.ttf", 16*(W//256))
         except OSError as e:
-            fnt = ImageFont.truetype("arial.ttf", 16*(W//256))
+            # ref: https://stackoverflow.com/a/65180042
+            import matplotlib
+            system_fonts = matplotlib.font_manager.findSystemFonts(fontpaths=None, fontext='ttf')
+            fnt = ImageFont.truetype(system_fonts[0], 16*(W//256))
 
         
         for i,(x,y) in enumerate(np.mgrid[:n_rows,:n_cols].T.reshape(-1,2)*[W,H]):
