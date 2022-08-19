@@ -22,7 +22,7 @@ class BaseConfig:
 
 
 class MinDalleConfig(BaseConfig):
-    def __init__(self, dtype:torch.dtype=torch.float16, is_mega:bool=True, is_reusable:bool=True, is_verbose=True, models_root:str=None):
+    def __init__(self, dtype:torch.dtype=torch.float32, is_mega:bool=True, is_reusable:bool=True, is_verbose=True, models_root:str=None):
         '''Configuration for MinDalle
 
         Args:
@@ -42,7 +42,7 @@ class MinDalleConfig(BaseConfig):
         
 
 class MinDalleExtConfig(BaseConfig):
-    def __init__(self, dtype:torch.dtype=torch.float16, model_variant:str='mega', is_reusable:bool=True, is_verbose=True, models_root:str=None):
+    def __init__(self, dtype:torch.dtype=torch.float32, model_variant:str='mega', is_reusable:bool=True, is_verbose=True, models_root:str=None):
         '''Configuration for MinDalleExt (extension of MinDalle)
 
         model_variant!='mega'|'mini' requires weights converted to pytorch with https://github.com/kuprel/min-dalle-flax
