@@ -24,7 +24,7 @@ conda activate min3flow
 mamba install matplotlib jupyter notebook
 mamba install pytorch torchvision cudatoolkit=11.6 -c pytorch -c conda-forge
 
- # (Glid3XL requirements)
+# (Glid3XL requirements)
 mamba install -c conda-forge transformers einops
 
 # CLIP requirements
@@ -44,7 +44,7 @@ pip install -e git+https://github.com/CompVis/taming-transformers.git@master#egg
 pip install -e .
 
 cd ..
-# install min3flow (Not strictly required unless using scripts)
+# install min3flow
 pip install -e. 
 ```
 
