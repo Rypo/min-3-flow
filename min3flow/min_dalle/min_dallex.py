@@ -19,7 +19,7 @@ def freeze(model, set_eval=False):
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.allow_tf32 = True
-torch.backends.cudnn.benchmark = False # Default: False
+torch.backends.cudnn.benchmark = True # Default: False
 torch.backends.cuda.matmul.allow_tf32 = True # Default: False
 torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 
@@ -77,16 +77,6 @@ class MinDalleExt(MinDalle):
             self.init_encoder()
             self.init_decoder()
             self.init_detokenizer()
-
-    # def init_encoder(self):
-    #     super().init_encoder()
-    #     #self.encoder = freeze(self.encoder)
-    # def init_decoder(self):
-    #     super().init_decoder()
-    #     #self.decoder = freeze(self.decoder)
-    # def init_detokenizer(self):
-    #     super().init_detokenizer()
-    #     #self.detokenizer = freeze(self.detokenizer)
 
 
     def init_encoder(self):
