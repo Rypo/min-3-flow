@@ -103,7 +103,7 @@ def _available_weights(stage='diffusion'):
 
 class Glid3XL:
     def __init__(self, guidance_scale=5.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
-                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None, device=None) -> None:
+                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None, dtype = torch.float32, device=None) -> None:
         
         self.guidance_scale = guidance_scale
         self.batch_size = batch_size
@@ -111,11 +111,12 @@ class Glid3XL:
         #self.skip_rate = skip_rate
         self.sample_method = sample_method
         self.H, self.W = int(imout_size[0]), int(imout_size[1])
+        self.dtype = dtype
         self.device = device if device is not None else torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
         self._weight_root = weight_root if weight_root is not None else os.path.expanduser(_DEFAULT_WEIGHT_ROOT)
 
-        self.dtype = torch.float32
+        
         self.cond_fn = None
         self.cur_t = None
         self._LDM_SCALE_FACTOR = 0.18215

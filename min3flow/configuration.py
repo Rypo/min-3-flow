@@ -22,13 +22,13 @@ class BaseConfig:
 
 
 class MinDalleConfig(BaseConfig):
-    def __init__(self, dtype:torch.dtype=torch.float32, is_mega:bool=True, is_reusable:bool=True, is_verbose=True, models_root:str=None):
+    def __init__(self, dtype:torch.dtype=torch.float16, is_mega:bool=True, is_reusable:bool=True, is_verbose=True, models_root:str=None):
         '''Configuration for MinDalle
 
         Args:
             dtype (torch.dtype): controls model precision, using float16 reduces memory usage by ~4gb over f32 (default: torch.float16)
             is_mega (bool): if True, uses the Mega-dalle model (default: True)
-            is_reusable (bool): if True, keeps model in memory. If destroys and frees memory after each stage (default: True)
+            is_reusable (bool): if True, keeps model in memory. Else destroys and frees memory after each stage (default: True)
             is_verbose (bool): if True, prints out model info (default: True)
             models_root (str): path to pretrained models. If None, defaults to ~/.cache/min3flow/min_dalle (default: None)
             
@@ -45,13 +45,14 @@ class MinDalleExtConfig(BaseConfig):
     def __init__(self, dtype:torch.dtype=torch.float16, model_variant:str='mega', is_reusable:bool=True, is_verbose=True, models_root:str=None):
         '''Configuration for MinDalleExt (extension of MinDalle)
 
-        model_variant!='mega' requires weights converted to pytorch with https://github.com/kuprel/min-dalle-flax
+        model_variant!='mega'|'mini' requires weights converted to pytorch with https://github.com/kuprel/min-dalle-flax
         (Not yet supported)
 
         Args:
             dtype (torch.dtype): controls model precision, using float16 reduces memory usage by ~4gb over f32 (default: torch.float16)
-            model_variant (str): the dalle variant to use. Can be {'mega','mini', 'mega_beta', 'mega_bf16', 'mega_full'} (default: 'mega')
-            is_reusable (bool): if True, keeps model in memory. If destroys and frees memory after each stage (default: True)
+            model_variant (str): the dalle variant to use. Supported values = {'mega','mini'} (default: 'mega')
+                Not yet fully supported options: {'mega_beta', 'mega_bf16', 'mega_full'}
+            is_reusable (bool): if True, keeps model in memory. Else destroys and frees memory after each stage (default: True)
             is_verbose (bool): if True, prints out model info (default: True)
             models_root (str): path to pretrained models. If None, defaults to ~/.cache/min3flow/min_dalle (default: None)
             
@@ -68,11 +69,11 @@ class MinDalleExtConfig(BaseConfig):
 
 class Glid3XLConfig(BaseConfig):
     def __init__(self, guidance_scale=5.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
-                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None):
+                 diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None, dtype = torch.float32,):
         '''Configuration for Glid3XL
 
         Args:
-            guidance_scale (float): classifier-free guidance scale. Values higher that ~5.0 have diminishing effects. (default: 3.0)
+            guidance_scale (float): classifier-free guidance scale. Values higher that ~5.0 have diminishing effects. (default: 5.0)
             batch_size (int): batch size (default: 16)
             steps (int): total number of diffusion steps. Negligible difference higher than 250 (default: 100)
             sample_method (str): diffusion sampling method. Can be {'plms','ddim','ddpm'} (default: 'plms')
@@ -85,6 +86,7 @@ class Glid3XLConfig(BaseConfig):
                 If not an existing path or in `weight_root` treat as alias and attempt to download.
             weight_root (str): path to pretrained models. (default: None)
                 If None, defaults to ~/.cache/min3flow/glid3_xl
+            dtype (torch.dtype): controls model precision. Can be {float16,float32} (default: torch.float32)
         '''
 
         super().__init__()
@@ -93,14 +95,12 @@ class Glid3XLConfig(BaseConfig):
         self.steps = steps
         self.sample_method = sample_method
         self.imout_size = imout_size
-        self.diffusion_weight = diffusion_weight #if model_path is not None else rel_model_root_glid3xl('finetune.pt')
-        #self.base_config.pretrained_root.joinpath(model_path)
-        self.kl_weight = kl_weight #if kl_path is not None else rel_model_root_glid3xl('kl-f8.pt')
-        #self.base_config.pretrained_root.joinpath(kl_path)
-        self.bert_weight = bert_weight #if bert_path is not None else rel_model_root_glid3xl('bert.pt')
+        self.diffusion_weight = diffusion_weight
+        self.kl_weight = kl_weight
+        self.bert_weight = bert_weight 
         self.weight_root = weight_root
-        #self.base_config.pretrained_root.joinpath(bert_path)
-        #self.seed = self.base_config.seed
+        self.dtype = dtype
+
         
 
 class Glid3XLClipConfig(Glid3XLConfig):
@@ -110,7 +110,7 @@ class Glid3XLClipConfig(Glid3XLConfig):
 
         Args:
             clip_guidance_scale (float): clip guidance scale. Controls how much the image should match the prompt. Typical range: 100-750. (default: 500)
-            guidance_scale (float): classifier-free guidance scale. Values higher that ~5.0 have diminishing effects. (default: 3.0)
+            guidance_scale (float): classifier-free guidance scale. Values higher that ~5.0 have diminishing effects. (default: 5.0)
             batch_size (int): batch size. Note: values > 1 not yet supported for clip guided Glid3Xl. (default: 1)
             steps (int): number of steps per epoch (default: 100)
             sample_method (str): diffusion sampling method. Can be {'plms','ddim','ddpm'} (default: 'plms')
