@@ -102,7 +102,7 @@ def _available_weights(stage='diffusion'):
     
 
 class Glid3XL:
-    def __init__(self, guidance_scale=3.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
+    def __init__(self, guidance_scale=5.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
                  diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None, device=None) -> None:
         
         self.guidance_scale = guidance_scale

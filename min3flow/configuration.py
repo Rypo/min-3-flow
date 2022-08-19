@@ -67,7 +67,7 @@ class MinDalleExtConfig(BaseConfig):
 
 
 class Glid3XLConfig(BaseConfig):
-    def __init__(self, guidance_scale=3.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
+    def __init__(self, guidance_scale=5.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
                  diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None):
         '''Configuration for Glid3XL
 
@@ -104,7 +104,7 @@ class Glid3XLConfig(BaseConfig):
         
 
 class Glid3XLClipConfig(Glid3XLConfig):
-    def __init__(self, clip_guidance_scale=500, cutn=16, guidance_scale=3.0, batch_size=1, steps=100, sample_method='plms', imout_size=(256,256), 
+    def __init__(self, clip_guidance_scale=500, cutn=16, guidance_scale=5.0, batch_size=1, steps=100, sample_method='plms', imout_size=(256,256), 
                  diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None):
         '''Configuration for Glid3XLClip
 
