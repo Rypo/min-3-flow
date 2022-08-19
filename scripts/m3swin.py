@@ -6,10 +6,8 @@ from tqdm.auto import tqdm
 
 #from .models.network_swinir import SwinIR as net
 #import min_swinir.utils as util
-from min3flow import SwinIR
+from min3flow.min_swinir import SwinIR
 
-MODULE_DIR = Path(__file__).resolve().parent
-ROOT_DIR = MODULE_DIR.parent
 
 def get_parser():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -20,7 +18,7 @@ def get_parser():
     parser.add_argument('--tile', type=int, default=None, help='Tile size. If None, entire image is passed to model.')
     parser.add_argument('--tile_overlap', type=int, default=0, metavar='N_PIX', help='Overlapping of different tiles') #32
     parser.add_argument('--output_dir', type=str, default='output/2_upsample/', metavar='DIR', help='output directory for upsampled images')
-    parser.add_argument('--model_dir', type=str, default='pretrained/SwinIR/', metavar='DIR', help='path to pretrained models')
+    parser.add_argument('--model_dir', type=str, default=None, metavar='DIR', help='path to pretrained models')
 
     taskarg_group = parser.add_mutually_exclusive_group(required=False)
     taskarg_group.add_argument('--small_model', action='store_true', help='Ignored unless --task "real_sr". Use smaller model, trained on less data.')

@@ -7,7 +7,6 @@ from PIL import Image
 import torch
 
 from min3flow.min_dalle import MinDalle, MinDalleExt
-from min3flow.min_dalle.min_dalle import _rel_model_root
 
 
 
@@ -21,7 +20,7 @@ def get_parser():
     parser.add_argument('--seed', type=int, default=-1)
     parser.add_argument('--grid-size', type=int, default=1)
     parser.add_argument('--image-path', type=str, default='output/0_generate/')
-    parser.add_argument('--models-root', type=str, default=_rel_model_root())
+    parser.add_argument('--models-root', type=str, default=None)
     parser.add_argument('--top_k', type=int, default=256)
     parser.add_argument('-sf','--supercondition_factor', type=int, default=32)
     return parser
