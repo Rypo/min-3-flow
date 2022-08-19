@@ -36,9 +36,10 @@ class Min3Flow:
             glid3xl_config (Glid3XLConfig|Glid3XLClipConfig): Configuration for the Glid3XL model. (default: None)
             swinir_config (SwinIRConfig): Configuration for the SwinIR model. (default: None)
             persist (bool|'cpu'): Whether to persist the prior stages models in memory after a stage is complete. (default: False)
-                If False, at the begining of each stage, unload non-active stage models and free cached memory. 
-                If 'cpu', at the begining of each stage, move all non-active stage models to cpu and free cached memory. 
-                If True, the model will be persisted in GPU memory. Warning: With f16 will use >16gb VRAM, with f32 VRAM usage > 19gb .
+                If False, at the beginning of each stage, unload non-active stage models and release memory. 
+                If 'cpu', at the beginning of each stage, move all non-active stage models to cpu and free cuda memory. 
+                    This option effectively trades VRAM for RAM, so memory requires are high.
+                If True, all stage models are persisted in GPU memory. Warning: With f16 will use >16gb VRAM, with f32 VRAM usage > 19gb .
             global_seed (int): Random seed shared for all models. Active when > 0 (default: -1)
             device (str): Device to use for the models. Defaults to cuda if available. (default: None)
     '''
@@ -127,11 +128,15 @@ class Min3Flow:
             else:
                 self.model_dalle = MinDalle(**self.dalle_config.to_dict())
 
+
         
+
         image = self.model_dalle.generate_images_tensor(
             text=text, 
             seed=(seed if seed is not None else self.global_seed), 
             grid_size=grid_size, 
+            #progressive_outputs = False,
+            is_seamless = False,
             temperature=temperature,
             top_k = top_k,
             supercondition_factor=supercondition_factor,
@@ -218,7 +223,9 @@ class Min3Flow:
         if self.model_swinir is None:
             self.model_swinir = SwinIR(**self.swinir_config.to_dict())
         
-
+        if isinstance(init_image, torch.Tensor):
+            if init_image.squeeze().ndim == 4 and tile_overlap==0:
+                return self.model_swinir.upscale_prebatched(init_image)
         
         if tile is None:
             W = init_image.width if isinstance(init_image, Image.Image) else init_image.shape[-1]
@@ -230,8 +237,6 @@ class Min3Flow:
                 
         if tile is False: # strict object False to throw error if value falsey
             image = self.model_swinir.upscale(init_image)
-        elif tile_overlap == 0:
-            image = self.model_swinir.upscale_prebatched(init_image)
         else:
             image = self.model_swinir.upscale_patchwise(init_image, tile=tile, tile_overlap=tile_overlap)
 
@@ -260,7 +265,12 @@ class Min3Flow:
         
         self._clip_model=self._clip_model.to(self.device)
         scos = self._clip_model(imgs.to(self.device),toks.to(self.device))[0].squeeze().sort(descending=True)
-        self._clip_model.to('cpu')
+
+        if not self.persist:
+            self._clip_model = None 
+            self._clip_preprocess = None
+        elif self.persist == 'cpu':
+            self._clip_model = self._clip_model.to('cpu')
         
         gc.collect()
         torch.cuda.empty_cache()
@@ -270,7 +280,7 @@ class Min3Flow:
 
 
     def show_grid(self, image: Union[torch.FloatTensor,Image.Image], cell_hw:Union[int,tuple]=None, plot_index=True, clip_sort_text:str=None) -> Image.Image:
-        '''Show a grid of images with index annotations.
+        '''Show a grid of images with optional index annotations.
 
         Args:
             image (FloatTensor | Image): Image grid to show.
@@ -350,10 +360,13 @@ class Min3Flow:
         
         gen_text = self._cache.get('gen_text',None)
         dif_text = self._cache.get('dif_text',None)
-        if self._cache.get('active_stage') == 'diffuse' and dif_text is not None:
+        active_stage = self._cache.get('active_stage',None)
+        if active_stage == 'diffuse':
             text = dif_text
-        else:
+        elif active_stage == 'generate':
             text = gen_text
+        else:
+            text = (dif_text if dif_text is not None else gen_text)
         #text = (gen_text if gen_text is not None else dif_text)
         if text is None:
             text = 'result'
@@ -371,6 +384,7 @@ class Min3Flow:
                 
                 img = TF.to_pil_image(img)
                 img.save(path.format(text,i))
+            print('images saved to', path.format(text,i).replace(f'__{i:03d}','__###'))
 
        
        
