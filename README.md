@@ -21,7 +21,7 @@ cd min-3-flow
 conda create -n min3flow mamba # mamba recommended, not required. Optionally, replace 'mamba' with 'conda'
 conda activate min3flow
 
-mamba install jupyter notebook
+mamba install matplotlib jupyter notebook
 mamba install pytorch torchvision cudatoolkit=11.6 -c pytorch -c conda-forge
 
  # (Glid3XL requirements)
