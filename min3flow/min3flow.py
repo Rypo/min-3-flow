@@ -189,13 +189,12 @@ class Min3Flow:
             init_image = init_image.squeeze(0)
                 
         with torch.inference_mode(inference_safe):
-            image = self.model_glid3xl.gen_samples(
+            image = self.model_glid3xl.sample(
                 text=text, 
                 init_image=init_image, 
                 negative=negative, 
                 num_batches=num_batches,
                 skip_rate=skip_rate,
-                outdir=None,
                 seed=(seed if seed is not None else self.global_seed)
             )
 
