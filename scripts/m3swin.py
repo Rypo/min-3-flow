@@ -7,6 +7,7 @@ from tqdm.auto import tqdm
 #from .models.network_swinir import SwinIR as net
 #import min_swinir.utils as util
 from min3flow.min_swinir import SwinIR
+from min3flow.min_swinir import utils
 
 
 def get_parser():
@@ -35,8 +36,6 @@ def main():
     args = get_parser().parse_args()
 
     #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # set up model
-
     sir = SwinIR(
         task=args.task, 
         scale=args.scale, 
@@ -50,12 +49,13 @@ def main():
     outpath = Path(args.output_dir).joinpath(filename).as_posix()
     
     if args.tile is None:
-        sir.upscale(args.init_img, outpath=outpath)
+        output = sir.upscale(args.init_img)
     else:
-        #sir.upscale_tiled(args.init_img, args.tile, args.tile_overlap, outpath=outpath)
-        #sir.upscale_using_patches(args.init_img, slice_dim = args.tile, slice_overlap= args.tile_overlap, outpath=outpath, keep_pbar = False)
-        sir.upscale_patchwise(args.init_img, slice_dim = args.tile, slice_overlap= args.tile_overlap, outpath=outpath,)
+        output = sir.upscale_patchwise(args.init_img, slice_dim = args.tile, slice_overlap= args.tile_overlap)
     
+    img_out = sir.to_numpy(output)
+    utils.save_image(img_out, outpath)
+    print('Saved to:', outpath)
 
 
 

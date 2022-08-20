@@ -296,7 +296,7 @@ class Glid3XL:
         
         
         #init = init.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
-        h = self.ldm.encode(init.mul(2).sub(1)).sample() * self._LDM_SCALE_FACTOR 
+        h = self.ldm.encode(images.mul(2).sub(1)).sample() * self._LDM_SCALE_FACTOR 
         #init = torch.cat(self.batch_size*2*[h], dim=0)
         #init = torch.repeat_interleave(h, 2*(self.batch_size//h.size(0)), dim=0, output_size=2*self.batch_size) # (2*BS, 4, H/8, W/8)
     
@@ -423,7 +423,7 @@ class Glid3XL:
         return text, init_image
 
 
-    def gen_samples(self, text: str, init_image:Union[torch.FloatTensor,Image.Image], negative: str='', num_batches: int=1, skip_rate=0.5,  outdir: str=None, seed=-1,) -> torch.Tensor:
+    def sample(self, text: str, init_image:Union[torch.FloatTensor,Image.Image], negative: str='', num_batches: int=1, skip_rate=0.5,  seed=-1,) -> torch.Tensor:
         if seed > 0:
             torch.manual_seed(seed)
 
@@ -443,14 +443,8 @@ class Glid3XL:
         #with torch.inference_mode():
         output_images = self.decode_sample(bsample)
         
-        if outdir is None:
-            return output_images
-
-        # else
-
-        fname = Path(init_image).name if init_image else 'GEN__'+text.replace(' ', '_')+'.png'
-        outpath = os.path.join(outdir,  f'{num_batches:05d}_{fname}')
-        vutils.save_image(output_images, outpath, nrow=int((self.batch_size*max(1,num_batches)**0.5)), padding=0)
+        return output_images
+        
 
 
 

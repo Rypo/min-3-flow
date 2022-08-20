@@ -7,11 +7,10 @@ from pathlib import Path
 from PIL import Image
 import numpy as np
 import torch
-import requests
 from tqdm.auto import tqdm
 
 from .models.network_swinir import SwinIR as net
-from . import utils as util
+from . import utils
 from ..utils.io import download_weights
 
 #MODULE_DIR = Path(__file__).resolve().parent
@@ -75,7 +74,7 @@ def define_model(task, scale, large_model, training_patch_size, noise=None, jpeg
     if weight_root is None:
         weight_root = os.path.expanduser(_DEFAULT_WEIGHT_ROOT)
     
-    weight_name = util.construct_weightname(task, scale, large_model, training_patch_size, noise, jpeg)
+    weight_name = utils.construct_weightname(task, scale, large_model, training_patch_size, noise, jpeg)
     model_path = os.path.join(weight_root, weight_name)
     model_path = download_weights(model_path, _WEIGHT_DOWNLOAD_URL.format(weight_name))
     pretrained_model = torch.load(model_path)
@@ -83,8 +82,6 @@ def define_model(task, scale, large_model, training_patch_size, noise=None, jpeg
     model.load_state_dict(pretrained_model.get(param_key_g, pretrained_model), strict=True)
 
     return model
-
-
 
 
 class SwinIR:
@@ -146,19 +143,26 @@ class SwinIR:
         img = torch.cat([img, torch.flip(img, [3])], 3)[:, :, :, :w_new]
         return img
 
+    def transform_input(self, image, tensor_out=True):
+        if isinstance(image, str):
+            image = Image.open(image).convert('RGB')
+            
+        if isinstance(image, Image.Image):
+            image = np.array(image)
+
+        if isinstance(image, np.ndarray) and tensor_out:
+            image = self._arr2tensor(image)
+            
+        return image
 
     def preprocess_img(self, img_lq):
-        if not isinstance(img_lq, torch.Tensor):
-            if isinstance(img_lq, Image.Image):
-                img_lq = np.array(img_lq)
-            img_lq = self._arr2tensor(img_lq)
         h_old, w_old = img_lq.size()[-2:]
         img_lq = self._window_pad_img(img_lq, self.window_size)
 
         return img_lq, h_old, w_old 
 
 
-    def postprocess_output(self, output: torch.tensor, h_old: int, w_old: int) -> torch.tensor:
+    def postprocess_output(self, output: torch.tensor, h_old: int, w_old: int) -> torch.FloatTensor:
         output = output[..., :h_old * self.scale, :w_old * self.scale]
         output = output.detach().squeeze().float().clamp_(0, 1)
         
@@ -167,17 +171,17 @@ class SwinIR:
     def to_numpy(self, output):
         output = output.cpu().numpy()
         if output.ndim == 3:
-            output = np.transpose(output[[2, 1, 0], :, :], (1, 2, 0))  # CHW-RGB to HCW-BGR
+            #output = np.transpose(output[[2, 1, 0], :, :], (1, 2, 0))  # CHW-RGB to HCW-BGR
+            output = np.transpose(output, (1, 2, 0))  # CHW-RGB to HWC-RGB
         output = (output * 255.0).round().astype(np.uint8)  # float32 to uint8
         return output
         
     @torch.inference_mode()
-    def incremental_upscale_patchwise(self, img_lq: np.array, slice_dim=256, slice_overlap=0, outpath=None, keep_pbar=False) -> np.array:
+    def incremental_upscale_patchwise(self, img_lq: np.array, slice_dim=256, slice_overlap=0, keep_pbar=False) -> np.array:
         """Apply super resolution on smaller patches and return full image. 
         Preprocesses and transfers to GPU 1 patch at a time. Slower than upscale_patchwise, but more memory efficient."""
-        if isinstance(img_lq, str):
-            img_lq = Image.open(img_lq).convert('RGB')
-            #img_lq = cv2.imread(img_lq, cv2.IMREAD_COLOR)
+        img_lq = self.transform_input(img_lq, tensor_out=False)
+
         scale = self.scale
         h, w, c = img_lq.shape
         img_hq = np.zeros((h * scale, w * scale, c))
@@ -196,17 +200,15 @@ class SwinIR:
                     img_slice_hq = self.upscale(img_slice)
 
                     # update full image
-                    img_hq[h_slice * scale:h_max * scale, w_slice * scale:w_max * scale] = img_slice_hq
+                    img_hq[h_slice * scale:h_max * scale, w_slice * scale:w_max * scale] = self.to_numpy(img_slice_hq)
                     pbar.update(1)
 
             pbar.set_postfix(Status='Done')
         
-        if outpath is not None:
-            util.save_image(np.uint8(img_hq), outpath)
-            print('Saved to:', outpath)
-        else:
-            return np.uint8(img_hq)
-        #return np.uint8(img_hq)
+
+        return np.uint8(img_hq)
+
+
 
     def extract_patches(self, img_lq: np.array, slice_dim=256, slice_overlap=0) -> np.array:
         """Extract patches from input image"""
@@ -228,22 +230,18 @@ class SwinIR:
         return np.stack(patches, 0), np.array(slice_inds)
 
 
+
     @torch.inference_mode()
-    def upscale_patchwise(self, img_lq: np.array, slice_dim=256, slice_overlap=0, outpath=None) -> np.array:
+    def upscale_patchwise(self, img_lq, slice_dim=256, slice_overlap=0) -> torch.FloatTensor:
         """Apply super resolution on smaller patches and return full image.
         Preprocesses and transfers to all patches to GPU at once. Faster than incremental_upscale_patchwise, but less memory efficient.
         """
-        if isinstance(img_lq, str):
-            img_lq = Image.open(img_lq).convert('RGB')
-
-        if isinstance(img_lq, Image.Image):
-            img_lq = np.array(img_lq)
+        img_lq = self.transform_input(img_lq, tensor_out=False)
         
         h, w, c = img_lq.shape[-3:]
         #img_hq = np.zeros((h * scale, w * scale, c))
         patbatch,patinds = self.extract_patches(img_lq, slice_dim, slice_overlap)
         patches = torch.as_tensor(patbatch, dtype=torch.float).permute(0,3,1,2).div(255.) # B,H,W,C-RGB -> B, C-RGB, H, W
-        
         
         padded_patches = self._window_pad_img(patches).to(self.device)
         scaled_inds = torch.from_numpy(patinds*self.scale).to(self.device)
@@ -255,47 +253,27 @@ class SwinIR:
         for i, (hs,he,ws,we) in enumerate(tqdm(scaled_inds)):
             img_hq[...,hs:he,ws:we] = self.model(padded_patches[[i]])[...,:h,:w]
 
-        img_out = self.postprocess_output(img_hq,h,w)
-        if outpath is None:
-            return img_out
-        # else
-        img_out = self.to_numpy(img_out)
-        util.save_image(img_out, outpath)
-        print('Saved to:', outpath)
-        
-            
+        output = self.postprocess_output(img_hq,h,w)
+
+        return output
+
 
 
     @torch.inference_mode()
-    def upscale(self, img, outpath=None):
-        if isinstance(img, str):
-            img = Image.open(img).convert('RGB')
+    def upscale(self, img):
+        img = self.transform_input(img, tensor_out=True)
         img, h_old, w_old = self.preprocess_img(img)
         output = self.model(img)
         output = self.postprocess_output(output, h_old, w_old)
 
-        if outpath is None:
-            return output
+        return output
                     
-        # else
-        img_out = self.to_numpy(output)
-        util.save_image(img_out, outpath)
-        print('Saved to:', outpath)
 
     @torch.inference_mode()
-    def upscale_prebatched(self, img:torch.FloatTensor, outpath=None):
-        
+    def upscale_prebatched(self, img:torch.FloatTensor):
         imgs, h_old, w_old = self.preprocess_img(img)
-        
-        # output = torch.stack([self.model(img.unsqueeze(0))[...,:h_old,:w_old] for img in tqdm(imgs)],0)
         output = torch.stack([self.model(img.unsqueeze(0)) for img in tqdm(imgs)],0)
-        #output = self.upscale_patchwise(img, tile_size, tile_overlap)
         output = self.postprocess_output(output, h_old, w_old)
 
-        if outpath is None:
-            return output
-        # else
-        img_out = self.to_numpy(output)
-        util.save_image(img_out, outpath)
-        print('Saved to:', outpath)
+        return output
 

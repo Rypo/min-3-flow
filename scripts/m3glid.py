@@ -9,6 +9,7 @@ from PIL import Image
 import numpy as np
 
 import torch
+import torchvision.utils as vutils
 from min3flow.min_glid3xl import Glid3XL, Glid3XLClip
 
 
@@ -39,7 +40,7 @@ def get_parser():
 
     parser.add_argument('--seed', type = int, default=-1, required = False, help='random seed')
 
-    parser.add_argument('--guidance_scale', '-gs', type = float, default = 3.0, required = False, help='classifier-free guidance scale')
+    parser.add_argument('--guidance_scale', '-gs', type = float, default = 5.0, required = False, help='classifier-free guidance scale')
 
     parser.add_argument('--steps', type = int, default = 100, required = False, help='number of diffusion steps')
     parser.add_argument('--skip_rate', type = float, default = 0.5, required = False, help='percent of diffusion steps to skip')
@@ -59,6 +60,9 @@ def get_parser():
 
     return parser
 
+def save_images(images, nrows, outdir, filename):
+    outpath = Path(outdir).joinpath(filename)
+    vutils.save_image(images, outpath, nrow=nrows, padding=0)
 
 #@torch.inference_mode()
 def do_run():
@@ -74,12 +78,11 @@ def do_run():
             guidance_scale=args.guidance_scale, 
             batch_size=args.batch_size, 
             steps=args.steps, 
-            #skip_rate=args.skip_rate, 
             sample_method=args.sample_method,
             imout_size=(args.height,args.width), 
-            diffusion_weight=args.diffusion_weight, #'pretrained/finetune.pt', 
-            kl_weight=args.kl_weight,       #'pretrained/kl-f8.pt', 
-            bert_weight=args.bert_weight,   #'pretrained/bert.pt', 
+            diffusion_weight=args.diffusion_weight, 
+            kl_weight=args.kl_weight,     
+            bert_weight=args.bert_weight,
             weight_root=args.weight_root,
         )
     else:
@@ -89,30 +92,28 @@ def do_run():
             guidance_scale=args.guidance_scale, 
             batch_size=args.batch_size, 
             steps=args.steps, 
-            #skip_rate=args.skip_rate, 
             sample_method=args.sample_method,
             imout_size=(args.height,args.width), 
-            diffusion_weight=args.diffusion_weight, #'pretrained/finetune.pt', 
-            kl_weight=args.kl_weight,       #'pretrained/kl-f8.pt', 
-            bert_weight=args.bert_weight,   #'pretrained/bert.pt', 
+            diffusion_weight=args.diffusion_weight, 
+            kl_weight=args.kl_weight,      
+            bert_weight=args.bert_weight, 
             weight_root=args.weight_root,
         )
 
     print('Using device:', gxl.device)
-    
-    gxl.gen_samples(
-        init_image=args.init_image, 
+    # TODO: handle grid_idx in CLI
+    output_images = gxl.sample(
         text=args.text, 
-        
+        init_image=args.init_image, 
         negative=args.negative, 
         num_batches=args.num_batches,
-        grid_idx=args.grid_idx,
         skip_rate=args.skip_rate, 
         outdir=args.outdir,
         seed=args.seed,
     )
-
-
+    nrows = int((args.batch_size*max(1,args.num_batches)**0.5))
+    fname = Path(args.init_image).name if args.init_image else args.text.replace(' ', '_')+'.png'
+    save_images(output_images, nrows, args.outdir, fname)
 
 if __name__ == '__main__':
     
