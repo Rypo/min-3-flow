@@ -90,6 +90,17 @@ _WEIGHT_DOWNLOAD_URLS = {
     # Desc: puck has been trained on pixel art. 
     # While the underlying kl-f8 encoder seems to struggle somewhat with pixel art, results are still interesting.
 } 
+_alias_map = {
+    'kl-f8.pt':    ['kl-f8.pt', 'kl-f8'],
+    'bert.pt':     ['bert.pt', 'bert'],
+    'base.pt':     ['base.pt', 'base'],
+    'finetune.pt': ['finetune.pt', 'finetune', 'jack'],
+    'inpaint.pt':  ['inpaint.pt','inpaint'],
+    'erlich.pt':   ['erlich.pt', 'erlich', 'logo'],
+    'ongo.pt':     ['ongo.pt', 'ongo', 'art'],
+    'puck.pt':     ['puck.pt', 'puck', 'pixel']
+}
+_weight_aliases = {alias:name for name,values in _alias_map.items() for alias in values}
 
 def _available_weights(stage='diffusion'):
     all_weights = list(_WEIGHT_DOWNLOAD_URLS.keys())
@@ -102,6 +113,7 @@ def _available_weights(stage='diffusion'):
     
 
 class Glid3XL:
+    '''See min3flow.configuration.Glid3XLConfig for parameters description.'''
     def __init__(self, guidance_scale=5.0, batch_size=16, steps=100, sample_method='plms', imout_size=(256,256), 
                  diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root = None, dtype = torch.float32, device=None) -> None:
         
@@ -132,7 +144,8 @@ class Glid3XL:
         for stage,weight in zip(['diffusion','ldm','encoder'],[diffusion_weight, kl_weight, bert_weight]):
             if os.path.exists(weight):
                 wpath = weight
-            elif weight in _WEIGHT_DOWNLOAD_URLS:
+            elif weight in _weight_aliases:
+                weight = _weight_aliases[weight]
                 dl_url = _WEIGHT_DOWNLOAD_URLS[weight]
                 wpath = os.path.join(self._weight_root, weight)
                 wpath = download_weights(wpath, dl_url)
@@ -375,7 +388,7 @@ class Glid3XL:
                 #if j % 5 == 0 and j != self.diffusion.num_timesteps - 1:
                     #self.save_sample(sample, i, fname)
                     #save_sample(i, sample)
-            #print(sample['pred_xstart'].shape)
+
             batch_samples.append(sample['pred_xstart'][:self.batch_size].detach())
             # Cut at batch_size because data is noisy/corrupted afterwards ~~duplicated afterwards (?)~~
 
@@ -384,25 +397,6 @@ class Glid3XL:
         #bsample = torch.cat(batch_samples, dim=0).detach_()
         
         return bsample
-
-
-    #@functools.cache
-    def cache_model_kwargs(self, text: str, negative: str='', image_embed=None):
-        if self.model_config['image_condition'] and image_embed is None:
-             # using inpaint model but no image is provided
-            image_embed = torch.zeros(self.batch_size*2, 4, self.H//8, self.W//8, device=self.device)
-        if (text, negative) != self._cache.get('texts', None):
-            
-            text_emb, text_blank, text_emb_clip, text_emb_clip_blank = self.encode_text(text=text, negative=negative)
-            self._text_emb_clip = text_emb_clip
-
-            self._model_kwargs = {
-                "context": torch.cat([text_emb, text_blank], dim=0).float(),
-                "clip_embed": torch.cat([text_emb_clip, text_emb_clip_blank], dim=0).float() if self.model_config['clip_embed_dim'] else None,
-                "image_embed": image_embed 
-            }
-
-            self._cache['texts'] = (text, negative)
 
     
     def make_model_kwargs(self, text: str, negative: str='', image_embed=None):
@@ -471,6 +465,7 @@ class Glid3XL:
 
 
 class Glid3XLClip(Glid3XL):
+    '''See min3flow.configuration.Glid3XLClipConfig for description of parameters.'''
     # May be cleaner to use a single class for both Glid3XL and Glid3XLClip. 
     # However, seperation allows for future optimization over non-clip model default. 
     # The non-clip guided model could temporarily unload clip and ldm while generating samples, and reload for final output.
