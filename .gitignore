@@ -6,6 +6,9 @@ _*
 # Ignore output image files
 output/**/*.png
 
+# VSCode
+.vscode
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
