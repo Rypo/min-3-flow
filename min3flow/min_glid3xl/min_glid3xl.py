@@ -120,7 +120,6 @@ class Glid3XL:
         self.guidance_scale = guidance_scale
         self.batch_size = batch_size
         self.steps = steps
-        #self.skip_rate = skip_rate
         self.sample_method = sample_method
         self.H, self.W = int(imout_size[0]), int(imout_size[1])
         self.dtype = dtype
@@ -246,10 +245,9 @@ class Glid3XL:
         return clip_model, clip_preprocess
 
     def load_bert(self, bert_path):
-        bert = BERTEmbedder(1280, 32).eval().requires_grad_(False).to(self.device)#.half()
-        #bert = bert.requires_grad_(False)
+        bert = BERTEmbedder(1280, 32).eval().requires_grad_(False).to(self.device)
         bert.load_state_dict(torch.load(bert_path, map_location=self.device), strict=False)
-        bert = bert.half()#.to(self.device)
+        bert = bert.half()
 
         return bert
 
@@ -289,20 +287,13 @@ class Glid3XL:
         return text_emb, text_blank, text_emb_clip, text_emb_clip_blank
 
     #@torch.inference_mode()
-    def encode_image_grid(self, images, grid_idx=None):
-        # assume grid for now, will break if 512x512 or similar. TODO: add argument later.
+    def encode_image_grid(self, images):
         if images is None:
             return None
-
-        if isinstance(grid_idx, int):
-            init = images[[grid_idx]]
+        if images.shape[-2:] != (self.H, self.W):
             #init = init.resize((self.W, self.H), Image.Resampling.LANCZOS)
-            #init = TF.to_tensor(init).to(self.device).unsqueeze(0).clamp(0,1)
-        elif isinstance(grid_idx, list):
-            init = images[grid_idx]
-        elif grid_idx is None:
-            init = images
-
+            images = TF.resize(images, (self.H, self.W), interpolation=TF.InterpolationMode.BICUBIC)
+        
         
         #init = init.to(self.device, dtype=torch.float).div(255.).clamp(0,1)
         h = self.ldm.encode(init.mul(2).sub(1)).sample() * self._LDM_SCALE_FACTOR 
@@ -432,7 +423,7 @@ class Glid3XL:
         return text, init_image
 
 
-    def gen_samples(self, text: str, init_image:Union[torch.FloatTensor,Image.Image], negative: str='', num_batches: int=1, grid_idx:Union[int,list]=None, skip_rate=0.5,  outdir: str=None, seed=-1,) -> torch.Tensor:
+    def gen_samples(self, text: str, init_image:Union[torch.FloatTensor,Image.Image], negative: str='', num_batches: int=1, skip_rate=0.5,  outdir: str=None, seed=-1,) -> torch.Tensor:
         if seed > 0:
             torch.manual_seed(seed)
 
@@ -440,7 +431,7 @@ class Glid3XL:
         text, init_image = self.process_inputs(text, init_image)
 
         with torch.no_grad(): # inference_mode breaks clip guidance
-            init_image_embed = self.encode_image_grid(init_image, grid_idx=grid_idx)#.to(dtype=self.dtype)
+            init_image_embed = self.encode_image_grid(init_image)#.to(dtype=self.dtype)
             model_kwargs = self.make_model_kwargs(text, negative)
 
         #print('init_image_embed, context, clip_embed, image_embed')
@@ -470,7 +461,7 @@ class Glid3XLClip(Glid3XL):
     # However, seperation allows for future optimization over non-clip model default. 
     # The non-clip guided model could temporarily unload clip and ldm while generating samples, and reload for final output.
     # The clip guided model needs to keep both models loaded for generating samples.
-    def __init__(self, clip_guidance_scale=500, cutn=16, guidance_scale=3.0, batch_size=1, steps=100, sample_method='plms', imout_size=(256,256), 
+    def __init__(self, clip_guidance_scale=500, cutn=16, guidance_scale=5.0, batch_size=1, steps=100, sample_method='plms', imout_size=(256,256), 
                  diffusion_weight='finetune.pt', kl_weight='kl-f8.pt', bert_weight='bert.pt', weight_root=None, device=None) -> None:
         
         assert batch_size==1, "Clip guided model currently only supports batch_size=1"
@@ -523,14 +514,12 @@ class Glid3XLClip(Glid3XL):
             return -torch.autograd.grad(loss, x)[0]
 
 
-    def encode_image_grid(self, images, grid_idx=None):
-        if grid_idx is None:
-            print("WARNING: Clip guided model requires a single grid_idx, defaulting to grid_idx = 0")
-            grid_idx = 0
-        elif (isinstance(grid_idx,list) and len(grid_idx)>1):
-            print(f"WARNING: Clip guided model requires a single grid_idx, defaulting to first (grid_idx = {grid_idx[0]})")
-            grid_idx = grid_idx[0]
-        return super().encode_image_grid(images, grid_idx)
+    def encode_image_grid(self, images):
+        if images.ndim == 4 and images.shape[0] > 1:
+            print("WARNING: Clip guided model requires at most 1 input image, defaulting to first in batch")
+            images = images[0]
+
+        return super().encode_image_grid(images)
 
 
 

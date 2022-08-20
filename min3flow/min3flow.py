@@ -147,7 +147,7 @@ class Min3Flow:
         return image
 
     
-    def diffuse(self, text:str=None, init_image:torch.FloatTensor=None, grid_idx:Union[int,list]=None, skip_rate:float=0.5,  negative:str='', num_batches:int=1, seed=None) -> Image.Image:
+    def diffuse(self, text:str=None, init_image:torch.FloatTensor=None, skip_rate:float=0.5,  negative:str='', num_batches:int=1, seed=None) -> Image.Image:
         '''Perform diffusion sampling on 1 or more images using Glid3XL or Glid3XLClip.
         
         Args:
@@ -155,8 +155,6 @@ class Min3Flow:
                 If None, use the last text prompt used. 
             init_image (FloatTensor): Initial image to seed the sampling. (default: None)
                 If None, will generate images from scratch using the text prompt.
-            grid_idx (int, list): Index or list of indices of the image in the grid to sample. (default: None)
-                Use Min3Flow.show_grid to display grid indices overlay. If None, use all images. 
             skip_rate (float): Percent of diffusion steps to skip. (default: 0.5)
                 Values near 1 will minimally change the init_image, near 0 will significantly change the input image. 
             negative (str): Negative Text prompt to oppose text prompt. (default: '')
@@ -176,7 +174,6 @@ class Min3Flow:
             
         self._cache['dif_text'] = text
 
-        
         inference_safe = self._cache.get('inference_safe', None)
         if self.model_glid3xl is None:
             if isinstance(self.glid3xl_config, Glid3XLClipConfig):
@@ -187,7 +184,9 @@ class Min3Flow:
                 inference_safe = True
             self._cache['inference_safe'] = inference_safe
         
-                
+        if isinstance(init_image, torch.Tensor) and init_image.ndim > 4:
+            # Keep 1,3,H,W but not 1,N,3,H,W (in case index with init_image[None])
+            init_image = init_image.squeeze(0)
                 
         with torch.inference_mode(inference_safe):
             image = self.model_glid3xl.gen_samples(
@@ -195,7 +194,6 @@ class Min3Flow:
                 init_image=init_image, 
                 negative=negative, 
                 num_batches=num_batches,
-                grid_idx=grid_idx,
                 skip_rate=skip_rate,
                 outdir=None,
                 seed=(seed if seed is not None else self.global_seed)
@@ -224,6 +222,9 @@ class Min3Flow:
             self.model_swinir = SwinIR(**self.swinir_config.to_dict())
         
         if isinstance(init_image, torch.Tensor):
+            if init_image.ndim > 4:
+                # Keep 1,3,H,W but not 1,N,3,H,W (in case index with init_image[None])
+                init_image = init_image.squeeze(0)
             if init_image.squeeze().ndim == 4 and tile_overlap==0:
                 return self.model_swinir.upscale_prebatched(init_image)
         
