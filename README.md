@@ -1,17 +1,17 @@
-# Min-3-Flow
+# Min3Flow
 [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Rypo/min-3-flow/blob/main/min3flow.ipynb)
 
-Min-3-Flow is a 3-stage text-to-image generation pipeline. Its structure is modeled after [dalle-flow](https://github.com/jina-ai/dalle-flow/) but forgos the the client-server architecture in favor of modularity and configurabilty. The underlying packages have all been stripped down and optimized for inference, taking design inspiration from [min-dalle](https://github.com/kuprel/min-dalle).
+Min3Flow is a 3-stage text-to-image generation framework. Its structure is modeled after [dalle-flow](https://github.com/jina-ai/dalle-flow/) but forgoes the client-server architecture in favor of modularity and configurabilty. The underlying packages have all been stripped down and optimized for inference, taking design inspiration from [min-dalle](https://github.com/kuprel/min-dalle).
 
 
-## Min-3-Flow vs DALL·E Flow
+## Min3Flow vs DALL·E Flow
 At a high level, both packages do the same thing in a similar way. 
 1. Generate an image from a text prompt using DALL·E-Mega weights
 2. Diffusion refinement with GLID-3-XL
 3. Upsample the 256x256 output images to 1024x1024 with SwinIR
 
 A few thousand feet lower and you'll note that:
-1. Min-3-Flow uses [min-dalle](https://github.com/kuprel/min-dalle) instead of [dalle-mini](https://github.com/borisdayma/dalle-mini) for text-to-image generation. This means the pipeline is **entirely PyTorch based**, i.e. no flax dependency. 
+1. Min3Flow uses [min-dalle](https://github.com/kuprel/min-dalle) instead of [dalle-mini](https://github.com/borisdayma/dalle-mini) for text-to-image generation. This means the pipeline is **entirely PyTorch based**, i.e. no flax dependency. 
 2. The diffusion library, [GLID-3-XL](https://github.com/Jack000/glid-3-xl) has been **heavily** refactored and extented. It now functions as standalone module, not just a command line script and supports additional [ldm-finetune](https://github.com/LAION-AI/ldm-finetune) weights.
 3. Similar to the Glid3XL treatment, [SwinIR](https://github.com/JingyunLiang/SwinIR) is no-longer commandline bound. (Kudos to [SwinIR_wrapper](https://github.com/Lin-Sinorodin/SwinIR_wrapper/) for the inspiration)
 
@@ -101,7 +101,6 @@ pip install timm
 # ldm requirements
 pip install pytorch-lightning omegaconf 
 
-
 git clone https://github.com/Rypo/min-3-flow.git && cd min-3-flow
 git clone https://github.com/CompVis/latent-diffusion.git && cd latent-diffusion
 
@@ -177,7 +176,7 @@ G: 'mindalle-f32-sf32'
 ---
 ## Q/A 
 <details>
-<summary>How to pronounce Min-3-Flow?</summary>
+<summary>How to pronounce min-3-flow?</summary>
   I'm partial to "min-ee-flow" but "min-three-flow" is fair game. 
   
   My intention with the l337 style "E" was to sound less like some sort of Minecraft auto clicker (cf. MineFlow). 
@@ -185,7 +184,7 @@ G: 'mindalle-f32-sf32'
 <details>
 <summary>Why reinvent the wheel?</summary>
   
-  1. I found the client-server paradigm to be somewhat limiting in terms of parameter tuning. There are a lot more knobs that can be tuned than are allowed in DALL·E Flow. In persuit of this tunability, I ended up adding more functionality than existed with any of the base packages alone, 
+  1. I found the client-server paradigm to be somewhat limiting in terms of parameter tuning. There are a lot more knobs that can be tuned than are allowed in DALL·E Flow. In persuit of this tunability, I ended up adding more functionality than existed with any of the base packages alone, so it ended up being more than just the sum of its parts.
 
   2. I couldn't get DocArray to install on my machine. So, why spend an hour debugging when you can spend a month building your own!
 </details>
