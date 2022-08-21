@@ -342,7 +342,7 @@ class Min3Flow:
 
         return imgc
 
-    def save_images(self, image:Union[torch.FloatTensor,Image.Image], as_grid=True, cell_hw=None, outdir='output/results'):
+    def save_images(self, image:Union[torch.FloatTensor,Image.Image], as_grid=True, cell_hw=None, outdir='output/results', filename=None):
         '''Save images to disk.
         
         Args:
@@ -350,39 +350,45 @@ class Min3Flow:
             as_grid (bool): Whether to save as a grid. (default: True)
             cell_hw (int | tuple(int,int)): The height,width of each image in the grid. (default: None)
                 Must specify if image is not a batched FloatTensor of shape (N,C,H,W).
-            outdir (str): output dir path. (default: None)
-                If None, will save to output/results/<last_used_text_prompt>.png if as_grid=True
-                else output/results/<last_used_text_prompt>__<idx>.png
+            outdir (str): output directory path. (default: output/results)
+            filename (str): filename to save images to. (default: None)
+                If None, will save to `outdir`/<last_used_text_prompt>.png if as_grid=True
+                else `outdir`<last_used_text_prompt>__<idx>.png
         '''
         os.makedirs(outdir, exist_ok=True)
         
-        gen_text = self._cache.get('gen_text',None)
-        dif_text = self._cache.get('dif_text',None)
-        active_stage = self._cache.get('active_stage',None)
-        if active_stage == 'diffuse':
-            text = dif_text
-        elif active_stage == 'generate':
-            text = gen_text
-        else:
-            text = (dif_text if dif_text is not None else gen_text)
-        #text = (gen_text if gen_text is not None else dif_text)
-        if text is None:
-            text = 'result'
-            warnings.warn('no prompt text found, saving to result.png')
-        text = text.replace(' ','_')
+        if filename is None:
+            gen_text = self._cache.get('gen_text',None)
+            dif_text = self._cache.get('dif_text',None)
+            active_stage = self._cache.get('active_stage',None)
+            if active_stage == 'diffuse':
+                text = dif_text
+            elif active_stage == 'generate':
+                text = gen_text
+            else:
+                text = (dif_text if dif_text is not None else gen_text)
+            #text = (gen_text if gen_text is not None else dif_text)
+            if text is None:
+                text = 'result'
+                warnings.warn('no prompt text found, saving to result.png')
+            filename = text.replace(' ','_')+'.png'
 
+        stem,ext = os.path.splitext(filename)
+        if ext == '':
+            ext = '.png'
         if as_grid:
             image = self.show_grid(image, cell_hw, plot_index=False)
-            path = os.path.join(outdir, '{}.png'.format(text))
+            path = os.path.join(outdir, '{}{}'.format(stem,ext))
             image.save(path)
             print('saved to {}'.format(path))
         else:
-            path = os.path.join(outdir, '{}__{:03d}.png')
+            path = os.path.join(outdir, '{}__{:03d}{}')
             for i,img in enumerate(image):
                 
                 img = TF.to_pil_image(img)
-                img.save(path.format(text,i))
-            print('images saved to', path.format(text,i).replace(f'__{i:03d}','__###'))
+                outpath = path.format(stem,i,ext)
+                img.save(outpath)
+            print('images saved to', outpath.replace(f'__{i:03d}','__###'))
 
        
        
