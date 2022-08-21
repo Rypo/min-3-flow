@@ -21,8 +21,6 @@ from .utils import tensor_ops as tops
 from .configuration import MinDalleConfig, MinDalleExtConfig, Glid3XLConfig, Glid3XLClipConfig, SwinIRConfig
 
 
-
-
 class Min3Flow:
     '''Control flow for 3 pipeline stages.
 
@@ -128,9 +126,6 @@ class Min3Flow:
             else:
                 self.model_dalle = MinDalle(**self.dalle_config.to_dict())
 
-
-        
-
         image = self.model_dalle.generate_images_tensor(
             text=text, 
             seed=(seed if seed is not None else self.global_seed), 
@@ -140,11 +135,11 @@ class Min3Flow:
             temperature=temperature,
             top_k = top_k,
             supercondition_factor=supercondition_factor,
-            is_verbose=True
+            is_verbose=self.dalle_config.is_verbose,
         )
         self._cache['gen_text'] = text
         self._cache['grid_size'] = grid_size
-        return image
+        return image.detach().cpu()
 
     
     def diffuse(self, text:str=None, init_image:torch.FloatTensor=None, skip_rate:float=0.5,  negative:str='', num_batches:int=1, seed=None) -> Image.Image:
@@ -184,9 +179,11 @@ class Min3Flow:
                 inference_safe = True
             self._cache['inference_safe'] = inference_safe
         
-        if isinstance(init_image, torch.Tensor) and init_image.ndim > 4:
-            # Keep 1,3,H,W but not 1,N,3,H,W (in case index with init_image[None])
-            init_image = init_image.squeeze(0)
+        if isinstance(init_image, torch.Tensor):
+            init_image = init_image.to(self.device)
+            if init_image.ndim > 4:
+                # Keep 1,3,H,W but not 1,N,3,H,W (in case index with init_image[None])
+                init_image = init_image.squeeze(0)
                 
         with torch.inference_mode(inference_safe):
             image = self.model_glid3xl.sample(
@@ -198,7 +195,7 @@ class Min3Flow:
                 seed=(seed if seed is not None else self.global_seed)
             )
 
-        return image
+        return image.detach().cpu()
 
     @torch.inference_mode()
     def upscale(self, init_image: torch.FloatTensor, tile:Union[int,bool]=None, tile_overlap: int=0) -> Image.Image:
@@ -221,6 +218,7 @@ class Min3Flow:
             self.model_swinir = SwinIR(**self.swinir_config.to_dict())
         
         if isinstance(init_image, torch.Tensor):
+            init_image = init_image.to(self.device)
             if init_image.ndim > 4:
                 # Keep 1,3,H,W but not 1,N,3,H,W (in case index with init_image[None])
                 init_image = init_image.squeeze(0)
@@ -235,12 +233,12 @@ class Min3Flow:
             else: 
                 tile = False
                 
-        if tile is False: # strict object False to throw error if value falsey
+        if tile is False: # strict object False in case falsey
             image = self.model_swinir.upscale(init_image)
         else:
             image = self.model_swinir.upscale_patchwise(init_image, tile=tile, tile_overlap=tile_overlap)
 
-        return image
+        return image.detach().cpu()
 
 
     @torch.inference_mode()
@@ -278,7 +276,6 @@ class Min3Flow:
         return scos
 
 
-
     def show_grid(self, image: Union[torch.FloatTensor,Image.Image], cell_hw:Union[int,tuple]=None, plot_index=True, clip_sort_text:str=None) -> Image.Image:
         '''Show a grid of images with optional index annotations.
 
@@ -303,7 +300,8 @@ class Min3Flow:
                 # But, this is less likely to occur than having a single image passed to this function.
                 # Both swinir and Glid3XLClip can/will return 1 image. From a useablity standpoint, just returning the image
                 # is better than throwing an error and require a different function to handle the single image case. 
-                warnings.warn('Note: Unbatched tensors are assumed to be a single image. To treat as a grid, explictly set `cell_hw`')
+                if plot_index:
+                    warnings.warn('Note: Unbatched tensors are assumed to be a single image. To treat as a grid, explictly set `cell_hw`')
                 return tops.to_image(image)
             else:
                 image = tops.ungrid(image, hw_out=cell_hw)
