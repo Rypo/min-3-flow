@@ -330,7 +330,7 @@ class Min3Flow:
             fnt = ImageFont.truetype("DejaVuSans.ttf", 16*(W//256))
         except OSError as e:
             # ref: https://stackoverflow.com/a/65180042
-            import matplotlib
+            import matplotlib.font_manager
             system_fonts = matplotlib.font_manager.findSystemFonts(fontpaths=None, fontext='ttf')
             fnt = ImageFont.truetype(system_fonts[0], 16*(W//256))
 
