@@ -54,36 +54,8 @@ Have a look at the [Full Configuration in colab](https://colab.research.google.c
 ## Install
 ### Conda/Mamba
 ```sh
-git clone https://github.com/Rypo/min-3-flow.git
-cd min-3-flow
-
-conda create -n min3flow matplotlib jupyter notebook
-conda activate min3flow
-
-conda install pytorch torchvision cudatoolkit=11.6 -c pytorch -c conda-forge
-
-# (Glid3XL requirements)
-conda install -c conda-forge transformers einops
-
-# CLIP requirements
-conda install ftfy regex
-pip install git+https://github.com/openai/CLIP.git
-
-# SwinIR requirements
-pip install timm
-
-# ldm requirements
-conda install -c conda-forge omegaconf
-pip install pytorch-lightning # pip package typically more up to date than conda-forge
-
-# order is important, taming-transforms install before latent-diffusion
-git clone https://github.com/CompVis/latent-diffusion.git && cd latent-diffusion
-pip install -e git+https://github.com/CompVis/taming-transformers.git@master#egg=taming-transformers
-pip install -e .
-
-cd ..
-# install min3flow
-pip install -e. 
+git clone https://github.com/Rypo/min-3-flow.git && cd min-3-flow
+conda env create -f environment.yml
 ```
 ### Pip
 ```sh
@@ -113,7 +85,7 @@ cd ..
 # install min3flow
 pip install -e . 
 ```
-May need to add the following lines to the top of notebooks/scripts if `ldm` is not found
+May need to add the following lines to the top of notebooks/scripts if you get a `No module named 'ldm'` error.
 ```py
 import sys
 sys.path.append('latent-diffusion')

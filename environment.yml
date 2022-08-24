@@ -1,0 +1,25 @@
+name: min3flow
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - matplotlib=3.5.*
+  - notebook=6.4.*
+  - jupyter==1.0.*
+  - pytorch=1.12.*
+  - torchvision=0.13.*
+  - cudatoolkit=11.6
+  - einops=0.4.*
+  - transformers=4.21.*
+  - regex=2022.8.17
+  - ftfy=6.1.*
+  - omegaconf=2.2.*
+  - pytorch-lightning=1.7.*
+  - pip
+  - pip:
+    - git+https://github.com/openai/CLIP.git
+    - timm==0.6.7
+    - -e git+https://github.com/CompVis/taming-transformers.git@master#egg=taming-transformers
+    - -e git+https://github.com/CompVis/latent-diffusion.git@main#egg=latent-diffusion
+    - -e .
